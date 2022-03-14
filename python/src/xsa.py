@@ -17,7 +17,7 @@ class XsaDownloader:
     
     def download(self, output_dir, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
         """Downloads images of the specified observation and filters into a target output directory.
-        Files will be placed follwoing a {output_dir/filter/file} pattern.
+        Files will be placed following a {output_dir/filter/file} pattern.
 
         Args:
             output_dir (_type_): output directory where files will be placed
