@@ -42,7 +42,7 @@ class XsaHttpDownloader(XsaDownloader):
 
         Args:
             base_url (str): XMM-Newton Science Archive (XSA) base URL
-            regex_patern (str): regular expression used to matched amongst downloaded files
+            regex_patern (str): regular expression used to matched against downloaded files
         """
         super().__init__()
         self.base_url = base_url
