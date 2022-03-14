@@ -3,6 +3,7 @@ import tempfile
 import src.xsa as xsa
 import os
 
+
 class TestXsaHttpDownloader(unittest.TestCase):
  
     def test_download_single_filter_as_tar(self): 

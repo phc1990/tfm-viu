@@ -10,8 +10,9 @@ import requests
 import src.utils as utils
 import tarfile
 
+
 class XsaDownloader:
-    """XMM-Newton Science Archive downloader interface.
+    """XMM-Newton Science Archive (XSA) downloader interface.
     """
     
     def download(self, output_dir, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
@@ -29,13 +30,14 @@ class XsaDownloader:
         """
         pass
 
+
 class XsaHttpDownloader(XsaDownloader):
     """XMM-Newton Science Archive (XSA) downloader via HTTP get request.
     
     http://nxsa.esac.esa.int/nxsa-web/#aio
     """
     
-    def __init__(self, base_url: str, regex_patern: str) -> None:
+    def __init__(self, base_url: str, regex_patern: str):
         """Constructor.
 
         Args:
@@ -81,13 +83,11 @@ class XsaHttpDownloader(XsaDownloader):
                                                             regex_pattern=self.regex_pattern):
                         
                         extracted_file_path = utils.extract_tar_member_to_dir(tar=tar_file,
-                                                                            member=member,
-                                                                            output_dir=filter_dir)
+                                                                              member=member,
+                                                                              output_dir=filter_dir)
                         extracted_list.append(extracted_file_path)
                     
                 if len(extracted_list) > 0:
                     results[filter] = extracted_list
                     
         return results
-
-    
