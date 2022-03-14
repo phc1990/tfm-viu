@@ -5,6 +5,7 @@ import os
 import tarfile
 import re
 
+
 def build_path(part1: str, part2: str, extension: str = None) -> str:
     """Builds a filesystem path.
 
@@ -22,6 +23,7 @@ def build_path(part1: str, part2: str, extension: str = None) -> str:
         path += '.' + extension
     
     return path
+
 
 def find_members_in_tar(tar: tarfile.TarFile, regex_pattern: str) -> List[tarfile.TarInfo]:
     """Explores the given tar file searchinf for members matching the specified regular expression.
@@ -41,6 +43,7 @@ def find_members_in_tar(tar: tarfile.TarFile, regex_pattern: str) -> List[tarfil
             matches.append(member)
 
     return matches
+
 
 def extract_tar_member_to_dir(tar: tarfile.TarFile, member: tarfile.TarInfo, output_dir: str) -> str:
     """Extracts a tar member onto a target output directory, preserving its base name.
