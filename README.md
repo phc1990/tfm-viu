@@ -23,7 +23,8 @@ The `/python` module contains [Python3](https://www.python.org/downloads/) sourc
 ```
 
 The main functionalities of the module are:
-- Interfacing with XMM-Newton Science Archive (XSA) for data download.
+- Downloading data from [XMM-Newton Science Archive (XSA)](http://nxsa.esac.esa.int/nxsa-web/#home).
+- Spawning user interfaces to view [Flexible Image Transport System (FITS)](https://fits.gsfc.nasa.gov/) files.
 
 ### Style
 
