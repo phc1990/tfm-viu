@@ -9,7 +9,7 @@ The repository presents the following layout:
 ```
 /
     .gitignore      
-    python          Python3 source code and test data
+    /python          Python3 source code and test data
 ```
 
 ## `/python`
