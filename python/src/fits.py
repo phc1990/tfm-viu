@@ -23,7 +23,7 @@ class FitsUi:
     """Flexible Image Transport System (FITS) user interface (UI)."""
     
     def display(self, fits_paths: List[str], regions: List[Region]=[]):
-        """Displays the specified FITS with the specified regions overlaid on it.
+        """Displays the specified FITS with the specified regions overlaid on them.
 
         Args:
             fits_paths (List[str]): list of FITS paths
