@@ -8,7 +8,7 @@ import subprocess
 
 
 class Region:
-    """A spatial region to be overlay on a FITS."""
+    """A spatial region to be overlaid on a FITS."""
     
     def __init__(self, label: str, ra: float, dec: float, rad: float, color: str):
         self.label = label
@@ -23,11 +23,11 @@ class FitsUi:
     """Flexible Image Transport System (FITS) user interface (UI)."""
     
     def display(self, fits_paths: List[str], regions: List[Region]=[]):
-        """Displays the specified FITS with the specified regions overlapped on it.
+        """Displays the specified FITS with the specified regions overlaid on it.
 
         Args:
             fits_paths (List[str]): list of FITS paths
-            regions (List[Region], optional): list of regiosn to overlap. Defaults to [].
+            regions (List[Region], optional): list of regiosn to overlaid. Defaults to [].
         """
         pass
     
