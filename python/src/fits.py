@@ -3,6 +3,7 @@
 https://fits.gsfc.nasa.gov/
 """
 
+
 from typing import List
 import subprocess
 
@@ -19,7 +20,7 @@ class Region:
         pass
     
 
-class FitsUi:
+class Ui:
     """Flexible Image Transport System (FITS) user interface (UI)."""
     
     def display(self, fits_paths: List[str], regions: List[Region]=[]):
@@ -36,7 +37,7 @@ class FitsUi:
         pass
     
 
-class FitsDs9Ui(FitsUi):
+class Ds9Ui(Ui):
     """Flexible Image Transport System (FITS) user interface (UI) using SAO Image DS9 ('DS9'). 
 
     https://sites.google.com/cfa.harvard.edu/saoimageds9/home
@@ -84,5 +85,7 @@ class FitsDs9Ui(FitsUi):
         """See base class."""
         if self.current_process:
             self.current_process.terminate()
+            
+        self.current_process = None
 
         
