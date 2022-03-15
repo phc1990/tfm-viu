@@ -11,7 +11,7 @@ import src.utils as utils
 import tarfile
 
 
-class XsaDownloader:
+class Downloader:
     """XMM-Newton Science Archive (XSA) downloader interface.
     """
     
@@ -31,8 +31,8 @@ class XsaDownloader:
         pass
 
 
-class XsaHttpDownloader(XsaDownloader):
-    """XMM-Newton Science Archive (XSA) downloader via HTTP get request.
+class HttpDownloader(Downloader):
+    """XMM-Newton Science Archive (XSA) downloader via HTTP GET request.
     
     http://nxsa.esac.esa.int/nxsa-web/#aio
     """
