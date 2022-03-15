@@ -4,10 +4,10 @@ import src.xsa as xsa
 import os
 
 
-class TestXsaHttpDownloader(unittest.TestCase):
+class TestHttpDownloader(unittest.TestCase):
  
     def test_download_single_filter_as_tar(self): 
-        downloader = xsa.XsaHttpDownloader(base_url='http://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio',
+        downloader = xsa.HttpDownloader(base_url='http://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio',
                                            regex_patern='^.*?FSIMAG.*?\.FTZ$')
         
         with tempfile.TemporaryFile(mode='wb') as file:
@@ -19,8 +19,8 @@ class TestXsaHttpDownloader(unittest.TestCase):
             self.assertEqual(os.path.getsize(file.name), 12943360)
             
     def test_download(self): 
-        downloader = xsa.XsaHttpDownloader(base_url='http://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio',
-                                           regex_patern='^.*?FSIMAG.*?\.FTZ$')
+        downloader = xsa.HttpDownloader(base_url='http://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio',
+                                        regex_patern='^.*?FSIMAG.*?\.FTZ$')
         
         with tempfile.TemporaryDirectory() as output_dir:
             
