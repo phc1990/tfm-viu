@@ -42,7 +42,7 @@ Several **abstraction layers** have been defined so that the steps above can be 
 
 ### Layout
 
-The repository presents the following layout:
+The `python` module presents the following layout:
 
 ```
 /configs                configuration templates
