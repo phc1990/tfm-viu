@@ -45,6 +45,10 @@ class StdIoInterface(Interface):
     _REPEAT         = ["r", "repeat", "R", "REPEAT"]
     _CLOSE          = ["c", "close", "C", "CLOSE"]
     
+    def message(self, message: str):
+        """See base class."""
+        print(message)
+    
     def listen(self) -> Input:
         """See base class."""
         std_input = input()
@@ -60,15 +64,11 @@ class StdIoInterface(Interface):
         elif std_input in self._CLOSE:
             return Input.CLOSE
         else:
-            message('Invalid input. Available inputs:')
-            message('Detection    : ' + ' '.join(self._DETECTED))
-            message('Dubious      : ' + ' '.join(self._DUBIOUS))
-            message('No detection : ' + ' '.join(self._NOT_DETECTED))
-            message('Repeat       : ' + ' '.join(self._REPEAT))
-            message('Close        : ' + ' '.join(self._CLOSE))
+            self.message('Invalid input. Available inputs:')
+            self.message('Detection    : ' + ' '.join(self._DETECTED))
+            self.message('Dubious      : ' + ' '.join(self._DUBIOUS))
+            self.message('No detection : ' + ' '.join(self._NOT_DETECTED))
+            self.message('Repeat       : ' + ' '.join(self._REPEAT))
+            self.message('Close        : ' + ' '.join(self._CLOSE))
             return self.listen()
-            
-    def message(self, message: str):
-        """See base class."""
-        print(message)
     
