@@ -13,7 +13,7 @@ class TestUtils(unittest.TestCase):
         
         with tarfile.open(name=tar_path, mode='r') as tar: 
             matches = utils.find_members_in_tar(tar=tar,
-                                    regex_pattern='^.*?CRAZY_PATTERN_TO_MATCH$')
+                                                regex_pattern='^.*?CRAZY_PATTERN_TO_MATCH$')
         
             self.assertEqual(len(matches),0)
     
@@ -22,7 +22,7 @@ class TestUtils(unittest.TestCase):
         
         with tarfile.open(name=tar_path, mode='r') as tar: 
             matches = utils.find_members_in_tar(tar=tar,
-                                        regex_pattern='^.*?FSIMAG.*?\.FTZ$')
+                                                regex_pattern='^.*?FSIMAG.*?\.FTZ$')
             
             self.assertEqual(len(matches),2)
         
