@@ -9,7 +9,8 @@ The repository presents the following layout:
 ```
 /
     .gitignore      
-    /python          Python3 source code and test data
+    /python             Python3 source code and test data
+    /temp               files in this directory will be ignored by Git
 ```
 
 ## `/python`
@@ -44,6 +45,7 @@ Several **abstraction layers** have been defined so that the steps above can be 
 The repository presents the following layout:
 
 ```
+/configs                configuration templates
 /src                    source code
     fits.py             interfaces to display and/or analyze FITS
     input.py            capturing the analysis input
@@ -55,11 +57,17 @@ The repository presents the following layout:
     /data               test data
     test_*.py           test file for module "*"
 screening.py            puts together the screening process
-screening.ini           screening configuration template
+README.md               this file
+```
 
 ### Running the screening
 
+The file `/python/screening.py` will run the screening process. It only requires 1 argument pointing to a configuration file. A template of the configuration file can be found in `/python/configs/screening.ini`.
 
+You can **run the screening using test data as an example** from the repository base directory (i.e. this directory):
+
+```
+python3 python/screening.py python/test/data/screening.ini
 ```
 
 ### Style
@@ -70,7 +78,7 @@ Both source and test files follow the [PEP 8 Style Guide](https://peps.python.or
 
 Test files use the [unittest](https://docs.python.org/3/library/unittest.html) framework.
 
-Tests can be run from the `/python` directory:
+Tests can be **run from the `/python` directory**:
 
 ```
 python3 -m unittest discover test/
