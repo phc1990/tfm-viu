@@ -7,17 +7,16 @@ from io import FileIO
 import tempfile
 from typing import Dict, List
 import requests
-import src.utils as utils
 import tarfile
+import src.utils as utils
 
 
-class Downloader:
-    """XMM-Newton Science Archive (XSA) downloader interface.
+class Crawler:
+    """XMM-Newton Science Archive (XSA) crawler interface.
     """
     
-    def download(self, output_dir, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
-        """Downloads images of the specified observation and filters into a target output directory.
-        Files will be placed following a {output_dir/filter/file} pattern.
+    def crawl(self, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
+        """Obtains the images of the specified observation and filters.
 
         Args:
             output_dir (_type_): output directory where files will be placed
@@ -26,25 +25,28 @@ class Downloader:
 
         Returns:
             Dict[str, List[str]]: a key-value structure containing filter as keys and the list of corresponding
-            downloaded file paths as a list. Filters with no files will not be included in the results (no key).
+            file paths as a list. Filters with no files will not be included in the results (no key).
         """
         pass
 
 
-class HttpDownloader(Downloader):
-    """XMM-Newton Science Archive (XSA) downloader via HTTP GET request.
+class HttpCrawler(Crawler):
+    """XMM-Newton Science Archive (XSA) crawler via HTTP GET request. 
+    Downloaded files will be placed following a {download_dir/filter/file} pattern.
     
     http://nxsa.esac.esa.int/nxsa-web/#aio
     """
     
-    def __init__(self, base_url: str, regex_patern: str):
+    def __init__(self, download_dir, base_url: str, regex_patern: str):
         """Constructor.
 
         Args:
+            download_dir (_type_): directory where files will be downloaded
             base_url (str): XMM-Newton Science Archive (XSA) base URL
             regex_patern (str): regular expression used to matched against downloaded files
         """
         super().__init__()
+        self.download_dir = download_dir
         self.base_url = base_url
         self.regex_pattern = regex_patern
     
@@ -60,9 +62,11 @@ class HttpDownloader(Downloader):
                                                                                filter))
         file.write(response.content)
         
-    def download(self, output_dir, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
+    def crawl(self, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
         """See base class."""
         results = {}
+        observation_dir = utils.build_path(part1=self.download_dir,
+                                           part2=observation_id)
         
         for filter in filters:
             extracted_list = []
@@ -76,7 +80,7 @@ class HttpDownloader(Downloader):
                 temp_file.seek(0)
                 
                 with tarfile.open(fileobj=temp_file, mode='r') as tar_file:
-                    filter_dir = utils.build_path(part1=output_dir,
+                    filter_dir = utils.build_path(part1=observation_dir,
                                                   part2=filter)
                     
                     for member in utils.find_members_in_tar(tar=tar_file,
