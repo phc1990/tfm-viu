@@ -20,7 +20,7 @@ class Region:
         pass
     
 
-class Ui:
+class Interface:
     """Flexible Image Transport System (FITS) user interface (UI)."""
     
     def display(self, fits_paths: List[str], regions: List[Region]=[]):
@@ -37,7 +37,7 @@ class Ui:
         pass
     
 
-class Ds9Ui(Ui):
+class Ds9Interface(Interface):
     """Flexible Image Transport System (FITS) user interface (UI) using SAO Image DS9 ('DS9'). 
 
     https://sites.google.com/cfa.harvard.edu/saoimageds9/home
