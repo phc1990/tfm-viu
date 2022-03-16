@@ -1,7 +1,4 @@
-"""Input module.
-
-Used to collect/listen to analysis input.
-"""
+"""Analysis input module."""
 
 
 from email import message
@@ -17,8 +14,8 @@ class Input(Enum):
     CLOSE           = 5
 
 
-class InputInterface:
-    """Input interface."""
+class Interface:
+    """Analysis input interface."""
     
     def message(self, message: str):
         """Sends a message to the input interface.
@@ -37,7 +34,7 @@ class InputInterface:
         pass
     
     
-class StdIoUi(InputInterface):
+class StdIoInterface(Interface):
     """Input interface based on standard input ('stdin') and 
     standard output ('stdout').
     """
@@ -50,17 +47,17 @@ class StdIoUi(InputInterface):
     
     def listen(self) -> Input:
         """See base class."""
-        input = input()
+        std_input = input()
         
-        if input in self._DETECTED:
+        if std_input in self._DETECTED:
             return Input.DETECTED
-        elif input in self._DUBIOUS:
+        elif std_input in self._DUBIOUS:
             return Input.DUBIOUS
-        elif input in self._NOT_DETECTED:
+        elif std_input in self._NOT_DETECTED:
             return Input.NOT_DETECTED
-        elif input in self._REPEAT:
+        elif std_input in self._REPEAT:
             return Input.REPEAT
-        elif input in self._CLOSE:
+        elif std_input in self._CLOSE:
             return Input.CLOSE
         else:
             message('Invalid input. Available inputs:')
