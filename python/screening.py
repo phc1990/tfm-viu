@@ -126,11 +126,16 @@ def create_observation_repository(config) -> observation.Repository:
 def create_xsa_crawler(config) -> xsa.Crawler:
     required = get_field_or_fail(config, 'REQUIRED')
     type = get_field_or_fail(required, 'XSA_CRAWLER')
-    if type == 'HTTP':
+    if type == 'HTTP_PYTHON':
         section = get_field_or_fail(config, 'XSA_CRAWLER_HTTP')
-        return xsa.HttpCrawler(download_dir=get_field_or_fail(section, 'DOWNLOAD_DIRECTORY'),
-                               base_url=get_field_or_fail(section, 'BASE_URL'),
-                               regex_patern=get_field_or_fail(section, 'REGEX'))
+        return xsa.HttpPythonRequestsCrawler(download_dir=get_field_or_fail(section, 'DOWNLOAD_DIRECTORY'),
+                                             base_url=get_field_or_fail(section, 'BASE_URL'),
+                                             regex_patern=get_field_or_fail(section, 'REGEX'))
+    elif type == 'HTTP_CURL':
+        section = get_field_or_fail(config, 'XSA_CRAWLER_HTTP')
+        return xsa.HttpCurlCrawler(download_dir=get_field_or_fail(section, 'DOWNLOAD_DIRECTORY'),
+                                   base_url=get_field_or_fail(section, 'BASE_URL'),
+                                   regex_patern=get_field_or_fail(section, 'REGEX'))
         
     unrecognised_field_value('XSA_CRAWLER', type)
     

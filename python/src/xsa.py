@@ -9,6 +9,7 @@ from typing import Dict, List
 import requests
 import tarfile
 import src.utils as utils
+import subprocess
 
 
 class Crawler:
@@ -50,7 +51,7 @@ class HttpCrawler(Crawler):
         self.base_url = base_url
         self.regex_pattern = regex_patern
     
-    def _build_query_string(self, observation_id: str, filter: str) -> Dict[str, str]:
+    def _build_query_params(self, observation_id: str, filter: str) -> Dict[str, str]:
         return {'obsno': observation_id,    
                 'instname': 'OM',
                 'level': 'PPS',
@@ -58,9 +59,14 @@ class HttpCrawler(Crawler):
                 'filter': filter}
         
     def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):      
-        response = requests.get(self.base_url, params=self._build_query_string(observation_id,
-                                                                               filter))
-        file.write(response.content)
+        """Downloads data for the specified filter and observation to the specified file.
+
+        Args:
+            file (FileIO): file where data will be downloaded to
+            observation_id (str): observation identifier
+            filter (str): filter
+        """
+        pass
         
     def crawl(self, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
         """See base class."""
@@ -71,7 +77,7 @@ class HttpCrawler(Crawler):
         for filter in filters:
             extracted_list = []
             
-            with tempfile.TemporaryFile(mode='w+b') as temp_file:
+            with tempfile.NamedTemporaryFile(mode='w+b') as temp_file:
                 self._download_single_filter_as_tar(file=temp_file,
                                                     observation_id=observation_id,
                                                     filter=filter)
@@ -95,3 +101,45 @@ class HttpCrawler(Crawler):
                     results[filter] = extracted_list
                     
         return results
+    
+
+class HttpPythonRequestsCrawler(HttpCrawler):
+    """HTTPCrawler implementation using Python's 'requests' module.
+
+    https://docs.python-requests.org/en/latest/
+    """
+    
+    def __init__(self, download_dir, base_url: str, regex_patern: str):
+        """See base class."""
+        super().__init__(download_dir, base_url, regex_patern)
+    
+    def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):
+        """See base class."""      
+        response = requests.get(self.base_url, params=self._build_query_params(observation_id,
+                                                                               filter))
+        file.write(response.content)
+        
+
+class HttpCurlCrawler(HttpCrawler):
+    """HTTPCrawler implementation using curl via command line.
+
+    https://curl.se/docs/manpage.html
+    """
+    
+    def __init__(self, download_dir, base_url: str, regex_patern: str):
+        """See base class."""
+        super().__init__(download_dir, base_url, regex_patern)
+        
+    def _build_query_string(self, observation_id: str, filter: str) -> str:
+        params = []
+        for key, value in self._build_query_params(observation_id=observation_id, filter=filter).items():
+            params.append('='.join([key,value]))
+        
+        if len(params) > 0:
+            return '?' + '&'.join(params)
+        return ''
+    
+    def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):
+        """See base class."""
+        args = ['curl', '-o', file.name, self.base_url + self._build_query_string(observation_id=observation_id, filter=filter)]      
+        subprocess.Popen(args=args).wait()
