@@ -25,7 +25,7 @@ class TestCsvRepository(unittest.TestCase):
     
     def test_load_no_headers(self):
         repo = observation.CsvRepository(csv_path=helper.get_test_data_file_path('csv1.csv'),
-                                         ignore_n_top_lines=0)
+                                         ignore_top_n_lines=0)
         
         iter = repo.get_iter()
         
@@ -50,7 +50,7 @@ class TestCsvRepository(unittest.TestCase):
     
     def test_load_ignore_headers(self):
         repo = observation.CsvRepository(csv_path=helper.get_test_data_file_path('csv2.csv'),
-                                         ignore_n_top_lines=1)
+                                         ignore_top_n_lines=1)
         
         iter = repo.get_iter()
         

@@ -1,7 +1,7 @@
 """Observations-related module."""
 
 
-from typing import Iterator, List
+from typing import Iterator
 import csv
 
 
@@ -53,12 +53,12 @@ class CsvRepository(Repository):
     - dec2: declination at the end of the observation [deg]
     """
     
-    def __init__(self, csv_path: str, ignore_n_top_lines: int = 0):
+    def __init__(self, csv_path: str, ignore_top_n_lines: int = 0):
         """Constructor.
 
         Args:
             csv_path (str): Comma Separated Value (CSV) file path
-            ignore_n_top_lines (int, optional): number of lins to be ignored
+            ignore_top_n_lines (int, optional): number of lins to be ignored
             (e.g. 1 for headers). Defaults to 0.
         """
         super().__init__()
@@ -69,7 +69,7 @@ class CsvRepository(Repository):
             current_line = 1
             
             for line in reader:
-                if current_line > ignore_n_top_lines:
+                if current_line > ignore_top_n_lines:
                     observation = Observation(id        =line[0],
                                               object    =line[1],
                                               ra1       =float(line[2]),
