@@ -14,17 +14,53 @@ The repository presents the following layout:
 
 ## `/python`
 
-The `/python` module contains [Python3](https://www.python.org/downloads/) source code and test data:
+Written in [Python3](https://www.python.org/downloads/), the main functionailty of this module is to assist the user with by running **(semi)automated observation screening process**:
 
 ```
-/src                source code
-/test               test code
-    /data           test data
+1. Load observations metadata
+2. For each observation...
+
+    2.1 Obtain the relevant FITS
+    2.2 For each FIT...
+        
+        2.2.1 For each filter...
+    
+            2.2.1 Display the images
+            2.2.2 Capture the analysis input (e.g. 'detection', 'no detection', etc.)
+    
+    2.3 Record the analysis input for the observation
 ```
 
-The main functionalities of the module are:
-- Downloading data from [XMM-Newton Science Archive (XSA)](http://nxsa.esac.esa.int/nxsa-web/#home).
-- Spawning user interfaces to view [Flexible Image Transport System (FITS)](https://fits.gsfc.nasa.gov/) files.
+Several **abstraction layers** have been defined so that the steps above can be carried out by different implementations:
+
+- `src.observation.Repository` loads a set of observation metadata.
+- `src.xsa.Crawler` obtains real data for a given observation.
+- `src.fits.Interface` used for displaying and analyzing observations images.
+- `src.input.Interface` used to capture the analysis input.
+- `src.output.Recorder` used to register the analysis results.
+
+### Layout
+
+The repository presents the following layout:
+
+```
+/src                    source code
+    fits.py             interfaces to display and/or analyze FITS
+    input.py            capturing the analysis input
+    observation.py      reading and loading observations
+    output.py           registering and recording the analysis results
+    utils.py            tools and utilities
+    xsa.py              obtaining data from XMM-Newton Science Archive (XSA)
+/test                   test code
+    /data               test data
+    test_*.py           test file for module "*"
+screening.py            puts together the screening process
+screening.ini           screening configuration template
+
+### Running the screening
+
+
+```
 
 ### Style
 
@@ -39,5 +75,3 @@ Tests can be run from the `/python` directory:
 ```
 python3 -m unittest discover test/
 ```
-
-
