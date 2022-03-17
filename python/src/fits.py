@@ -4,31 +4,23 @@ https://fits.gsfc.nasa.gov/
 """
 
 
+import tempfile
 from typing import List
 import subprocess
-
-
-class Region:
-    """A spatial region to be overlaid on a FITS."""
-    
-    def __init__(self, label: str, ra: float, dec: float, rad: float, color: str):
-        self.label = label
-        self.ra = ra
-        self.dec = dec
-        self.rad = rad
-        self.color = color
-        pass
+import src.observation as observation
+import os
     
 
 class Interface:
     """Flexible Image Transport System (FITS) user interface (UI)."""
     
-    def display(self, fits_paths: List[str], regions: List[Region]=[]):
-        """Displays the specified FITS with the specified regions overlaid on them.
+    def display(self, fits_paths: List[str], observation: observation.Observation = None):
+        """Displays the specified FITS corresponding to the specified observation.
 
         Args:
             fits_paths (List[str]): list of FITS paths
-            regions (List[Region], optional): list of regiosn to overlaid. Defaults to [].
+            observation (observation.Observation): the corresponding observation. 
+            Defaults to None.
         """
         pass
     
@@ -69,8 +61,18 @@ class Ds9Interface(Interface):
         
         if self.zscale:
             self._append_arg(args, '-zscale')
+    
+    def _generate_region_command(self, ra: float, dec: float, radius: float, color: str) -> str:
+        return ''.join(['fk5;circle(',
+                        str(ra),
+                        ',',
+                        str(dec),
+                        ',',
+                        str(radius),
+                        ') # color=',
+                        color])
         
-    def display(self, fits_paths: List[str], regions: List[Region]=[]):
+    def display(self, fits_paths: List[str], observation: observation.Observation = None):
         """See base class."""       
         self.close_current_display()
         
@@ -79,7 +81,18 @@ class Ds9Interface(Interface):
         for fits_path in fits_paths:
             self._append_fits_args(fits_path=fits_path, args=args)
         
-        self.current_process = subprocess.Popen(args=args)
+        if observation:
+            with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_reg_file:
+                temp_reg_file.write(self._generate_region_command(observation.ra1, observation.dec1, 0.01, 'green'))
+                temp_reg_file.write(os.linesep)
+                temp_reg_file.write(self._generate_region_command(observation.ra2, observation.dec2, 0.01, 'red'))
+                
+                args.extend(['-regions',
+                             'load',
+                             'all',
+                             temp_reg_file.name])
+        
+            self.current_process = subprocess.Popen(args=args)
         
     def close_current_display(self):
         """See base class."""
@@ -87,5 +100,3 @@ class Ds9Interface(Interface):
             self.current_process.terminate()
             
         self.current_process = None
-
-        
