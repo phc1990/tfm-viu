@@ -25,11 +25,11 @@ class Screening:
         self.input_interface        = input_interface
         self.output_recorder        = output_recorder
         
-    def _iteration(self, filter: str, fits: List[str]) -> input.Input:
+    def _iteration(self, filter: str, fits: List[str], observation: observation.Observation) -> input.Input:
         self.fits_interface.close_current_display()
         
         self.input_interface.message('Displaying filter         : ' + filter)
-        self.fits_interface.display(fits)
+        self.fits_interface.display(fits, observation)
         
         self.input_interface.message('Awaiting input...')
         input = self.input_interface.listen()        
@@ -37,7 +37,8 @@ class Screening:
         if input == input.REPEAT:
             self.input_interface.message('Repeating filter...       : ' + filter)
             return self._iteration(filter=filter,
-                                   fits=fits)
+                                   fits=fits,
+                                   observation=observation)
         
         return input
     
@@ -61,7 +62,7 @@ class Screening:
             if len(data) > 0:
                 for filter,fits in data.items():
                     self.input_interface.message('')
-                    input_value = self._iteration(filter, fits)
+                    input_value = self._iteration(filter, fits, observation)
                     
                     if (input_value == input.Input.CLOSE):
                         close = True
