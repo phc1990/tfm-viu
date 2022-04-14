@@ -26,7 +26,7 @@ class Recorder:
         """
         pass
     
-    def record_observation(self, filters: List[str]):
+    def record_observation(self):
         """Records the current observation.
 
         Args:
@@ -85,11 +85,11 @@ class CsvRecorder(Recorder):
             return 'D'
         return 'ERROR'
     
-    def _create_csv_row(self, filters: List[str]) -> str:
+    def _create_csv_row(self) -> str:
         cols = [self.current_observation.id,
                 self.current_observation.object]
         
-        for filter in filters:   
+        for filter in observation._FILTERS:   
             if filter in self.current_record:
                 cols.append(self._input_to_str(self.current_record[filter]))
             else:
@@ -97,18 +97,18 @@ class CsvRecorder(Recorder):
                         
         return ','.join(cols)
         
-    def record_observation(self, filters: List[str]):
+    def record_observation(self):
         """See base class."""
         with open(self.csv_path, mode='a') as file:
             if (self.include_headers):
                 headers = ['observation',
                             'object']
                 
-                for filter in filters:
+                for filter in observation._FILTERS:
                     headers.append(filter)
                     
-                file.write(','.join(headers) + os.linesep)
+                file.write((','.join(headers)) + os.linesep)
                 self.include_headers = False
                 
-            file.write(self._create_csv_row(filters=filters) + os.linesep)
+            file.write(self._create_csv_row() + os.linesep)
             
