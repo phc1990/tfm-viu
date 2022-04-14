@@ -10,19 +10,18 @@ import requests
 import tarfile
 import src.utils as utils
 import subprocess
+import src.observation as observation
 
 
 class Crawler:
     """XMM-Newton Science Archive (XSA) crawler interface.
     """
     
-    def crawl(self, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
+    def crawl(self, observation: observation.Observation) -> Dict[str, List[str]]:
         """Obtains the images of the specified observation and filters.
 
         Args:
-            output_dir (_type_): output directory where files will be placed
-            observation_id (str): observation identifier
-            filters (List[str]): list of filters to search for
+            observation (observation.Observation): observation to be obtained
 
         Returns:
             Dict[str, List[str]]: a key-value structure containing filter as keys and the list of corresponding
@@ -52,11 +51,41 @@ class HttpCrawler(Crawler):
         self.regex_pattern = regex_patern
     
     def _build_query_params(self, observation_id: str, filter: str) -> Dict[str, str]:
+        """Build the query parameters.
+
+        Args:
+            observation_id (str): observation identifier.
+            filter (str): filter value (S,M,L,U,B,V which will be mapped according to 
+            https://xmm-tools.cosmos.esa.int/external/xmm_user_support/documentation/uhb/omfilters.html)
+
+        Raises:
+            Exception: if the filter is not recognised
+
+        Returns:
+            Dict[str, str]: a list of query parameters key-value pairs.
+        """
+        filter_alt_name = ''
+        
+        if filter == 'S':
+            filter_alt_name = 'UVW2'
+        elif filter == 'M':
+            filter_alt_name = 'UVM2'
+        elif filter == 'L':
+            filter_alt_name = 'UVW1'
+        elif filter == 'U':
+            filter_alt_name = 'U'
+        elif filter == 'B':
+            filter_alt_name = 'B'
+        elif filter == 'V':
+            filter_alt_name = 'V'
+        else:
+            raise Exception('Filter "' + filter + '" not recognised.')
+        
         return {'obsno': observation_id,    
                 'instname': 'OM',
                 'level': 'PPS',
                 'extension': 'FTZ',
-                'filter': filter}
+                'filter': filter_alt_name}
         
     def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):      
         """Downloads data for the specified filter and observation to the specified file.
@@ -68,26 +97,28 @@ class HttpCrawler(Crawler):
         """
         pass
         
-    def crawl(self, observation_id: str, filters: List[str]) -> Dict[str, List[str]]:
+    def crawl(self, observation: observation.Observation) -> Dict[str, List[str]]:
         """See base class."""
         results = {}
         observation_dir = utils.build_path(part1=self.download_dir,
-                                           part2=observation_id)
+                                           part2=observation.id)
         
-        for filter in filters:
+        for filter in observation.filters:
             extracted_list = []
             
             with tempfile.NamedTemporaryFile(mode='w+b') as temp_file:
                 self._download_single_filter_as_tar(file=temp_file,
-                                                    observation_id=observation_id,
+                                                    observation_id=observation.id,
                                                     filter=filter)
-                
+                                
                 # Point back at the begining of the file before reading it
                 temp_file.seek(0)
                 
                 with tarfile.open(fileobj=temp_file, mode='r') as tar_file:
                     filter_dir = utils.build_path(part1=observation_dir,
                                                   part2=filter)
+                    
+                    print(filter_dir)
                     
                     for member in utils.find_members_in_tar(tar=tar_file,
                                                             regex_pattern=self.regex_pattern):
@@ -136,6 +167,7 @@ class HttpCurlCrawler(HttpCrawler):
             params.append('='.join([key,value]))
         
         if len(params) > 0:
+            print('?' + '&'.join(params))
             return '?' + '&'.join(params)
         return ''
     

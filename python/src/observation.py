@@ -1,8 +1,11 @@
 """Observations-related module."""
 
 
-from typing import Iterator
+from typing import Iterator, List
 import csv
+
+
+_FILTERS = ['S','M','L','U','B','V']
 
 
 class Observation:
@@ -10,7 +13,8 @@ class Observation:
     
     def __init__(self, id: str, object: str,
                  ra1: float, dec1: float,
-                 ra2: float, dec2: float):
+                 ra2: float, dec2: float,
+                 filters: List[str]):
         """Constructor.
 
         Args:
@@ -20,13 +24,15 @@ class Observation:
             dec1 (float): declination at the start of the observation [deg]
             ra2 (float): right ascension at the end of the observation [deg]
             dec2 (float): declination at the end of the observation [deg]
+            filters (List[str]): list of filters
         """
-        self.id     = id
-        self.object = object
-        self.ra1    = ra1
-        self.dec1   = dec1
-        self.ra2    = ra2
-        self.dec2   = dec2
+        self.id         = id
+        self.object     = object
+        self.ra1        = ra1
+        self.dec1       = dec1
+        self.ra2        = ra2
+        self.dec2       = dec2
+        self.filters    = filters
         pass
     
 
@@ -42,7 +48,7 @@ class CsvRepository(Repository):
     """Observation repository using a Comma Separated Value (CSV) file.
     The CSV structure must be as follows: 
     
-    {id,object,ra1,dec1,ra2,dec2}
+    {id,object,ra1,dec1,ra2,dec2,filters}
     
     Where:
     - id: observation identifier
@@ -51,6 +57,7 @@ class CsvRepository(Repository):
     - dec1: declination at the start of the observation [deg]
     - ra2: right ascension at the end of the observation [deg]
     - dec2: declination at the end of the observation [deg]
+    - filters: list of filters separated by ';' (e.g. 'L;U;V')
     """
     
     def __init__(self, csv_path: str, ignore_top_n_lines: int = 0):
@@ -75,7 +82,8 @@ class CsvRepository(Repository):
                                               ra1       =float(line[2]),
                                               dec1      =float(line[3]),
                                               ra2       =float(line[4]),
-                                              dec2      =float(line[5]))
+                                              dec2      =float(line[5]),
+                                              filters   =line[6].split(';'))
                     observations.append(observation)
                     
                 current_line += 1

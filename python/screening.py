@@ -11,14 +11,12 @@ import configparser
 class Screening:
     
     def __init__(self,
-                 filters: List[str],
                  observation_respository: observation.Repository,
                  xsa_crawler: xsa.Crawler,
                  fits_interface: fits.Interface,
                  input_interface: input.Interface,
                  output_recorder: output.Recorder):
         
-        self.filters                = filters
         self.observation_repository = observation_respository
         self.xsa_crawler            = xsa_crawler
         self.fits_interface         = fits_interface
@@ -52,13 +50,11 @@ class Screening:
             self.input_interface.message('**************************')
             self.input_interface.message('Observation ID            : ' + observation.id)
             self.input_interface.message('Potential object          : ' + observation.object)
+            self.input_interface.message('Filters                   : ' + str(observation.filters))
             self.input_interface.message('Obtaining data...')
-            data = self.xsa_crawler.crawl(observation_id=observation.id,
-                                          filters=self.filters)
-            n = len(data)
-            m = 0
-            self.input_interface.message('Number of filters         : ' + str(n))
-            
+            data = self.xsa_crawler.crawl(observation=observation)
+
+            number_of_detections = 0
             if len(data) > 0:
                 for filter,fits in data.items():
                     self.input_interface.message('')
@@ -68,7 +64,7 @@ class Screening:
                         close = True
                         break
                     elif input_value == input.Input.DETECTED:
-                        m = m+1
+                        number_of_detections = number_of_detections+1
                         
                     self.input_interface.message('Registering filter input  : ' + str(input_value))
                     self.output_recorder.record_filter_input(filter, input_value)
@@ -77,8 +73,8 @@ class Screening:
                 break
             
             self.input_interface.message('')
-            self.input_interface.message('Registering observation   : ' + str(m) + ' detections')
-            self.output_recorder.record_observation(filters=self.filters)
+            self.input_interface.message('Registering observation   : ' + str(number_of_detections) + ' detections')
+            self.output_recorder.record_observation()
             self.input_interface.message('')
         
         if close:
@@ -176,9 +172,7 @@ def create_output_recorder(config) -> output.Recorder:
 
 def create_screening(config) -> Screening:
     required = get_field_or_fail(config, 'REQUIRED')
-    filters = get_field_or_fail(required,'FILTERS').split(',')
-    return Screening(filters=filters,
-                     observation_respository=create_observation_repository(config),
+    return Screening(observation_respository=create_observation_repository(config),
                      xsa_crawler=create_xsa_crawler(config),
                      fits_interface=create_fits_interface(config),
                      input_interface=create_input_interface(config),
