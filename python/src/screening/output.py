@@ -1,8 +1,8 @@
 """Analysis output module."""
 
 from typing import List
-import src.observation as observation
-import src.input as input
+import src.screening.observation as observation
+import src.screening.input as input
 import os
 
 

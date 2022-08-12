@@ -1,5 +1,5 @@
 import unittest
-import src.observation as observation
+import src.screening.observation as observation
 import test.helper as helper
 
 

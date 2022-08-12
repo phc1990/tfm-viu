@@ -1,6 +1,6 @@
 import unittest
 import tempfile
-import src.xsa as xsa
+import src.screening.xsa as xsa
 import os
 
 

@@ -1,11 +1,12 @@
 from typing import List
-import src.observation as observation
-import src.xsa as xsa
-import src.fits as fits
-import src.input as input
-import src.output as output
+import src.screening.observation as observation
+import src.screening.xsa as xsa
+import src.screening.fits as fits
+import src.screening.input as input
+import src.screening.output as output
 import sys
 import configparser
+from config import get_boolean_or_fail, get_field_or_fail, raise_unrecognised_field_value
 
 
 class Screening:
@@ -83,29 +84,6 @@ class Screening:
             self.input_interface.message('Finished: no more observations to screen.')
         
         self.fits_interface.close_current_display()
-
-
-def get_field_or_fail(config, field_name: str):
-    if field_name not in config:
-        raise Exception('Missing field "' + field_name + '"')
-    elif config[field_name] == '':
-        raise Exception('Empty field "' + field_name + '"')
-    
-    return config[field_name]
-
-
-def unrecognised_field_value(field_name: str, field_value: str):
-    raise Exception('Unrecognised value "' + field_value + '" for field "' + field_name + '"')
-    
-
-def get_boolean_or_fail(config, field_name: str) -> bool:
-    value = get_field_or_fail(config, field_name)
-    if value == 'TRUE':
-        return True
-    elif value == 'FALSE':
-        return False
-    
-    unrecognised_field_value(field_name, value)
     
 
 def create_observation_repository(config) -> observation.Repository:
@@ -117,7 +95,7 @@ def create_observation_repository(config) -> observation.Repository:
         return observation.CsvRepository(csv_path=get_field_or_fail(section,'CSV_FILEPATH'),
                                          ignore_top_n_lines=int(get_field_or_fail(section,'IGNORE_TOP_N_LINES')))
         
-    unrecognised_field_value('OBSERVATION_REPOSITORY', type)
+    raise_unrecognised_field_value('OBSERVATION_REPOSITORY', type)
     
 
 def create_xsa_crawler(config) -> xsa.Crawler:
@@ -134,7 +112,7 @@ def create_xsa_crawler(config) -> xsa.Crawler:
                                    base_url=get_field_or_fail(section, 'BASE_URL'),
                                    regex_patern=get_field_or_fail(section, 'REGEX'))
         
-    unrecognised_field_value('XSA_CRAWLER', type)
+    raise_unrecognised_field_value('XSA_CRAWLER', type)
     
     
 def create_fits_interface(config) -> fits.Interface:
@@ -146,7 +124,7 @@ def create_fits_interface(config) -> fits.Interface:
                                  zoom=get_field_or_fail(section,'ZOOM'),
                                  zscale=get_boolean_or_fail(section, 'ZSCALE'))
         
-    unrecognised_field_value('FITS_INTERFACE', type)
+    raise_unrecognised_field_value('FITS_INTERFACE', type)
 
 
 def create_input_interface(config) -> input.Interface:
@@ -155,7 +133,7 @@ def create_input_interface(config) -> input.Interface:
     if type == 'STDIO':
         return input.StdIoInterface()
     
-    unrecognised_field_value('INPUT_INTERFACE', type)
+    raise_unrecognised_field_value('INPUT_INTERFACE', type)
 
 
 def create_output_recorder(config) -> output.Recorder:
@@ -167,11 +145,10 @@ def create_output_recorder(config) -> output.Recorder:
         return output.CsvRecorder(csv_path=get_field_or_fail(section, 'CSV_FILEPATH'),
                                   include_headers=get_boolean_or_fail(section, 'INCLUDE_HEADERS'))
         
-    unrecognised_field_value('OUTPUT_RECORDER', type)
+    raise_unrecognised_field_value('OUTPUT_RECORDER', type)
 
 
 def create_screening(config) -> Screening:
-    required = get_field_or_fail(config, 'REQUIRED')
     return Screening(observation_respository=create_observation_repository(config),
                      xsa_crawler=create_xsa_crawler(config),
                      fits_interface=create_fits_interface(config),

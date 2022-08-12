@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-import src.utils as utils
+import src.screening.utils as utils
 import test.helper as helper
 import tarfile
 

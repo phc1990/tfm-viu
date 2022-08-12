@@ -8,9 +8,26 @@ import tempfile
 from typing import Dict, List
 import requests
 import tarfile
-import src.utils as utils
 import subprocess
-import src.observation as observation
+import src.screening.utils as utils
+import src.screening.observation as observation
+
+
+def convert_filter_name_to_xsa_name(filter: str) -> str:
+    if filter == 'S':
+        return 'UVW2'
+    elif filter == 'M':
+        return 'UVM2'
+    elif filter == 'L':
+        return 'UVW1'
+    elif filter == 'U':
+        return 'U'
+    elif filter == 'B':
+        return 'B'
+    elif filter == 'V':
+        return 'V'
+    else:
+        raise Exception('Filter "' + filter + '" not recognised.')
 
 
 class Crawler:
@@ -64,28 +81,11 @@ class HttpCrawler(Crawler):
         Returns:
             Dict[str, str]: a list of query parameters key-value pairs.
         """
-        filter_alt_name = ''
-        
-        if filter == 'S':
-            filter_alt_name = 'UVW2'
-        elif filter == 'M':
-            filter_alt_name = 'UVM2'
-        elif filter == 'L':
-            filter_alt_name = 'UVW1'
-        elif filter == 'U':
-            filter_alt_name = 'U'
-        elif filter == 'B':
-            filter_alt_name = 'B'
-        elif filter == 'V':
-            filter_alt_name = 'V'
-        else:
-            raise Exception('Filter "' + filter + '" not recognised.')
-        
         return {'obsno': observation_id,    
                 'instname': 'OM',
                 'level': 'PPS',
                 'extension': 'FTZ',
-                'filter': filter_alt_name}
+                'filter': convert_filter_name_to_xsa_name(filter=filter)}
         
     def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):      
         """Downloads data for the specified filter and observation to the specified file.
@@ -117,8 +117,6 @@ class HttpCrawler(Crawler):
                 with tarfile.open(fileobj=temp_file, mode='r') as tar_file:
                     filter_dir = utils.build_path(part1=observation_dir,
                                                   part2=filter)
-                    
-                    print(filter_dir)
                     
                     for member in utils.find_members_in_tar(tar=tar_file,
                                                             regex_pattern=self.regex_pattern):
@@ -167,7 +165,6 @@ class HttpCurlCrawler(HttpCrawler):
             params.append('='.join([key,value]))
         
         if len(params) > 0:
-            print('?' + '&'.join(params))
             return '?' + '&'.join(params)
         return ''
     
