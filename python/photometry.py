@@ -1,65 +1,54 @@
 import sys
-import configparser
 
-from astropy.io import fits, ascii
-from astropy.stats import sigma_clipped_stats
-from astropy.wcs import WCS
+import tempfile
 
-import matplotlib.pyplot as plt
+from src.config import config_from_sys_ars
+from src.photometry.hdu import HDUW
+from src.photometry.phot import PhotTable
+from src.photometry.ui import UI, TrailSelector
 
-from photutils import DAOStarFinder
-from photutils import (aperture_photometry,
-                       CircularAperture,
-                       CircularAnnulus)
+from astroquery.esa.xmm_newton import XMMNewton
+            
+
+def _calibrate_using_source_list(phot_table: PhotTable):
+    hduw = phot_table.hduw
+    with tempfile.NamedTemporaryFile(mode='w+b') as source_list_file:
+        XMMNewton.download_data(hduw.observation_id, filename=source_list_file.name, instname='OM', name='OBSMLI', level='PPS', extension='FTZ')
+        phot_table.calibrate_against_source_list(source_list_file=source_list_file.name+'.FTZ',
+                                                 filter=hduw.filter_name)
+
+def _calibrate_using_cataloge(phot_table: PhotTable):
+    config = config_from_sys_ars()
+    required = config.child('REQUIRED')
+    
+    fwhm = required.get_float('SOURCE_DETECTION_FWHM')
+    sources = hduw.find_sources(fwhm=fwhm)
+        
+    phot_table.add_sources_apertures(sources=sources,
+                                     aperture_radius=2*fwhm,
+                                     annular_aperture_start_offset=required.get_float('SOURCE_ANNULAR_APERTURE_START_OFFSET'),
+                                     annular_aperture_end_offset=required.get_float('SOURCE_ANNULAR_APERTURE_END_OFFSET'))
+    
+    # TODO this to be probably picked by user
+    phot_table.calibrate_against_catalogue(start_magnitude=15.0,
+                                           end_magnitude=18.0)
+    
+    ui.add_sources(sources=sources)
+
 
 if __name__ == '__main__':
 
+    hduw = HDUW(file=sys.argv[1])
+    ui = UI(hduw=hduw)
+    phot_table = PhotTable(hduw=hduw)
+
+    _calibrate_using_source_list(phot_table=phot_table)
     
-    print("**** START ****")
-    args = sys.argv 
-    
-    if len(args) < 2:
-        raise Exception('Missing .ini configuration file location.')
-    elif len(args) > 2:
-        raise Exception('Too many arguments.')
-    
-    config = configparser.ConfigParser(inline_comment_prefixes='#')
-    config.read(args[1])
-    required = config['REQUIRED']
+    # TODO this params
+    trail_selector = TrailSelector(height=7, semi_out=2)
+    ui.select_trail(selector=trail_selector)
 
-    hdu = fits.open(required['IMAGE'])
-    hdu = hdu[0]
-    hdu.header
-    epoch = hdu.header.get('DATE-OBS')
-    filter_name = hdu.header.get('FILTER')
-    naxis1 = hdu.header.get('NAXIS1')
-    naxis2 = hdu.header.get('NAXIS2')
-    
-    print(f'Image {naxis1}x{naxis2} taken on {epoch}, with the {filter_name} filter.')
-    bkg_mean, bkg_median, bkg_sigma = sigma_clipped_stats(hdu.data, sigma=3.0)
-    wcs = WCS(hdu.header)
-    print(f'bkg mean {bkg_mean}, bkg_med {bkg_median}, bkg_sigma{bkg_sigma}')
-    
-    fig = plt.figure()
-    ax = plt.subplot(projection=wcs)
-    im = ax.imshow( hdu.data,
-                    cmap='Greys',
-                    origin='lower',
-                    vmin=bkg_median-3*bkg_sigma,
-                    vmax=bkg_median+3*bkg_sigma)
-    fig.colorbar(im, ax=ax)
-    plt.show()
+    magnitude = phot_table.perform_trail_photometry( rectangular_aperture=trail_selector.rectangular_aperture,
+                                                     rectangular_annulus=trail_selector.rectangular_annulus)
 
-
-    fwhm=float(required['SOURCE_DETECTION_FWHM'])
-
-    daofind = DAOStarFinder(fwhm=fwhm,
-                            threshold=bkg_median+3.*bkg_sigma)
-
-    sources = daofind(hdu.data)
-
-    print('Number of sources detected: {:d}'.format(len(sources)))
-    print('\n')
-    print("**** END ****")
-
-
+    print(magnitude)

@@ -70,6 +70,29 @@ You can **run the screening using test data as an example** from the repository 
 python3 python/screening.py python/test/data/screening.ini
 ```
 
+### Running the photometry
+
+The file `/python/photometry.py` will runn the photometry process. It requires an argument pointing to the file to analyse.
+
+You can **run the photometry using test data as an example** from the repository ase directory (i.e. this directory):
+
+```
+python3 python/photometry.py python/test/data/0303561001_L.FTZ 
+```
+
+It will display the image
+
+![Image display](docs/readme/image001.png)
+
+You can now left-click to select on both ends of the trail (one left-click at each of the edges):
+
+![Trail selection](docs/readme/image002.png)
+
+A third click on the image will close it and the maginute will be displayed on the console:
+
+![Magnitude](docs/readme/image003.png)
+
+
 ### Style
 
 Both source and test files follow the [PEP 8 Style Guide](https://peps.python.org/pep-0008/#introduction).

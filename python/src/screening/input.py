@@ -1,7 +1,6 @@
 """Analysis input module."""
 
 
-from email import message
 from enum import Enum
 
 

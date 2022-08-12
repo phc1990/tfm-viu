@@ -7,7 +7,7 @@ https://fits.gsfc.nasa.gov/
 import tempfile
 from typing import List
 import subprocess
-import src.observation as observation
+import src.screening.observation as observation
 import os
     
 

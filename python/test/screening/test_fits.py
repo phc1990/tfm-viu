@@ -1,8 +1,8 @@
 import unittest
-import src.fits as fits
+import src.screening.fits as fits
 import test.helper as helper
 import time
-import src.observation as observation
+import src.screening.observation as observation
 
 
 class TestDs9Ui(unittest.TestCase):
