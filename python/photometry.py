@@ -17,7 +17,7 @@ def _calibrate_using_source_list(phot_table: PhotTable):
         phot_table.calibrate_against_source_list(source_list_file=source_list_file.name+'.FTZ',
                                                  filter=hduw.filter_name)
 
-def _calibrate_using_cataloge(phot_table: PhotTable):
+def _calibrate_using_catalogue(phot_table: PhotTable):
     config = config_from_sys_ars()
     required = config.child('REQUIRED')
     
