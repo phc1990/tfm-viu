@@ -99,6 +99,8 @@ class PhotTable:
     def calibrate_against_source_list(self, source_list_file, filter) -> None:
         hdul = fits.open(source_list_file)
         zero_point, slope = hdul[1].header['ABM0'+filter], hdul[1].header['ABF0'+filter]
+        for h in hdul[1].header:
+            print(str(h) + ' = ' + str(hdul[1].header[h]))
         self.fitting_model = _LinearModel(slope, zero_point)
         
         
