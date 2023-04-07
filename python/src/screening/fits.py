@@ -91,9 +91,9 @@ class Ds9Interface(Interface):
                              'load',
                              'all',
                              temp_reg_file.name])
-        
+    
             self.current_process = subprocess.Popen(args=args)
-        
+                
     def close_current_display(self):
         """See base class."""
         if self.current_process:

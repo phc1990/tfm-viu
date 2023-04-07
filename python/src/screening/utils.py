@@ -37,8 +37,9 @@ def find_members_in_tar(tar: tarfile.TarFile, regex_pattern: str) -> List[tarfil
         List[tarfile.TarInfo]: the list of matches
     """
     matches = []
-    
+
     for member in tar:
+        
         if re.match(pattern=regex_pattern, string=member.name):
             matches.append(member)
 

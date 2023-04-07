@@ -90,7 +90,19 @@ class Config:
         """
         value = self.get_field(field_name)
         return float(value)
+    
+    def get_int(self, field_name: str) -> int:
+        """Returns the field's value as a int, raising an exception when not able to.
 
+        Args:
+            field_name (str): field's name.
+
+        Returns:
+            int: the int value of the field.
+        """
+        value = self.get_field(field_name)
+        return int(value)
+    
 
 def config_from_sys_ars() -> Config:
     """Creates a Config instance from System arguments. It assumes that there
