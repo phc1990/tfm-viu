@@ -120,7 +120,6 @@ class HttpCrawler(Crawler):
                     
                     for member in utils.find_members_in_tar(tar=tar_file,
                                                             regex_pattern=self.regex_pattern):
-                        
                         extracted_file_path = utils.extract_tar_member_to_dir(tar=tar_file,
                                                                               member=member,
                                                                               output_dir=filter_dir)
@@ -170,5 +169,6 @@ class HttpCurlCrawler(HttpCrawler):
     
     def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):
         """See base class."""
-        args = ['curl', '-o', file.name, self.base_url + self._build_query_string(observation_id=observation_id, filter=filter)]      
+        args = ['curl', '-o', file.name, self.base_url + self._build_query_string(observation_id=observation_id, filter=filter)]
         subprocess.Popen(args=args).wait()
+        

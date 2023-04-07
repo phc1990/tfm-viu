@@ -6,8 +6,7 @@ import src.screening.input as input
 import src.screening.output as output
 import sys
 import configparser
-from config import get_boolean_or_fail, get_field_or_fail, raise_unrecognised_field_value
-
+from src.config import Config
 
 class Screening:
     
@@ -56,6 +55,7 @@ class Screening:
             data = self.xsa_crawler.crawl(observation=observation)
 
             number_of_detections = 0
+
             if len(data) > 0:
                 for filter,fits in data.items():
                     self.input_interface.message('')
@@ -87,73 +87,63 @@ class Screening:
     
 
 def create_observation_repository(config) -> observation.Repository:
-    required = get_field_or_fail(config, 'REQUIRED')
-    type = get_field_or_fail(required, 'OBSERVATIONS_REPOSITORY')
+    required = config.child('REQUIRED')
+    type = required.get_field('OBSERVATIONS_REPOSITORY')
     
     if type == 'CSV':
-        section = get_field_or_fail(config,'OBSERVATIONS_REPOSITORY_CSV')
-        return observation.CsvRepository(csv_path=get_field_or_fail(section,'CSV_FILEPATH'),
-                                         ignore_top_n_lines=int(get_field_or_fail(section,'IGNORE_TOP_N_LINES')))
-        
-    raise_unrecognised_field_value('OBSERVATION_REPOSITORY', type)
-    
+        section = config.child('OBSERVATIONS_REPOSITORY_CSV')
+        return observation.CsvRepository(csv_path           = section.get_field('CSV_FILEPATH'),
+                                         ignore_top_n_lines = section.get_int('IGNORE_TOP_N_LINES'))
+            
 
 def create_xsa_crawler(config) -> xsa.Crawler:
-    required = get_field_or_fail(config, 'REQUIRED')
-    type = get_field_or_fail(required, 'XSA_CRAWLER')
+    required = config.child('REQUIRED')
+    type = required.get_field('XSA_CRAWLER')
     if type == 'HTTP_PYTHON':
-        section = get_field_or_fail(config, 'XSA_CRAWLER_HTTP')
-        return xsa.HttpPythonRequestsCrawler(download_dir=get_field_or_fail(section, 'DOWNLOAD_DIRECTORY'),
-                                             base_url=get_field_or_fail(section, 'BASE_URL'),
-                                             regex_patern=get_field_or_fail(section, 'REGEX'))
+        section = config.child('XSA_CRAWLER_HTTP')
+        return xsa.HttpPythonRequestsCrawler(download_dir   = section.get_field('DOWNLOAD_DIRECTORY'),
+                                             base_url       = section.get_field('BASE_URL'),
+                                             regex_patern   = section.get_field('REGEX'))
     elif type == 'HTTP_CURL':
-        section = get_field_or_fail(config, 'XSA_CRAWLER_HTTP')
-        return xsa.HttpCurlCrawler(download_dir=get_field_or_fail(section, 'DOWNLOAD_DIRECTORY'),
-                                   base_url=get_field_or_fail(section, 'BASE_URL'),
-                                   regex_patern=get_field_or_fail(section, 'REGEX'))
-        
-    raise_unrecognised_field_value('XSA_CRAWLER', type)
+        section = config.child('XSA_CRAWLER_HTTP')
+        return xsa.HttpCurlCrawler(download_dir     = section.get_field('DOWNLOAD_DIRECTORY'),
+                                   base_url         = section.get_field('BASE_URL'),
+                                   regex_patern     = section.get_field('REGEX'))
     
     
 def create_fits_interface(config) -> fits.Interface:
-    required = get_field_or_fail(config, 'REQUIRED')
-    type = get_field_or_fail(required, 'FITS_INTERFACE')
+    required = config.child('REQUIRED')
+    type = required.get_field('FITS_INTERFACE')
     if type == 'DS9':
-        section = get_field_or_fail(config, 'FITS_INTERFACE_DS9')
-        return fits.Ds9Interface(ds9_path=get_field_or_fail(section, 'DS9_BINARY_FILEPATH'),
-                                 zoom=get_field_or_fail(section,'ZOOM'),
-                                 zscale=get_boolean_or_fail(section, 'ZSCALE'))
+        section = config.child('FITS_INTERFACE_DS9')
+        return fits.Ds9Interface(ds9_path   = section.get_field('DS9_BINARY_FILEPATH'),
+                                 zoom       = section.get_field('ZOOM'),
+                                 zscale     = section.get_boolean('ZSCALE'))
         
-    raise_unrecognised_field_value('FITS_INTERFACE', type)
-
 
 def create_input_interface(config) -> input.Interface:
-    required = get_field_or_fail(config, 'REQUIRED')
-    type = get_field_or_fail(required, 'INPUT_INTERFACE')
+    required = config.child('REQUIRED')
+    type = required.get_field('INPUT_INTERFACE')
     if type == 'STDIO':
         return input.StdIoInterface()
-    
-    raise_unrecognised_field_value('INPUT_INTERFACE', type)
 
 
 def create_output_recorder(config) -> output.Recorder:
-    required = get_field_or_fail(config, 'REQUIRED')
-    type = get_field_or_fail(required, 'OUTPUT_RECORDER')
+    required = config.child('REQUIRED')
+    type = required.get_field('OUTPUT_RECORDER')
     
     if type == 'CSV':
-        section = get_field_or_fail(config,'OUTPUT_RECORDER_CSV')
-        return output.CsvRecorder(csv_path=get_field_or_fail(section, 'CSV_FILEPATH'),
-                                  include_headers=get_boolean_or_fail(section, 'INCLUDE_HEADERS'))
-        
-    raise_unrecognised_field_value('OUTPUT_RECORDER', type)
+        section = config.child('OUTPUT_RECORDER_CSV')
+        return output.CsvRecorder(csv_path          = section.get_field('CSV_FILEPATH'),
+                                  include_headers   = section.get_boolean('INCLUDE_HEADERS'))
 
 
 def create_screening(config) -> Screening:
-    return Screening(observation_respository=create_observation_repository(config),
-                     xsa_crawler=create_xsa_crawler(config),
-                     fits_interface=create_fits_interface(config),
-                     input_interface=create_input_interface(config),
-                     output_recorder=create_output_recorder(config))
+    return Screening(observation_respository    = create_observation_repository(config),
+                     xsa_crawler                = create_xsa_crawler(config),
+                     fits_interface             = create_fits_interface(config),
+                     input_interface            = create_input_interface(config),
+                     output_recorder            = create_output_recorder(config))
    
    
 if __name__ == '__main__':
@@ -165,8 +155,9 @@ if __name__ == '__main__':
     elif len(args) > 2:
         raise Exception('Too many arguments.')
     
-    config = configparser.ConfigParser(inline_comment_prefixes='#')
-    config.read(args[1])
+    data = configparser.ConfigParser(inline_comment_prefixes='#')
+    data.read(args[1])
+    config = Config(data=data)
     screening = create_screening(config)
     screening.start()
     
