@@ -35,9 +35,9 @@ class TrailSelector:
         Args:
             event (_type_): on-click event
         """
-        if self.clicks == 0:
+        if self.clicks == 1:
             self.event1 = event
-        elif self.clicks == 1:
+        elif self.clicks == 2:
             self.event2 = event
             self._compute_properties()
         self.clicks +=1
@@ -66,7 +66,7 @@ class TrailSelector:
         Returns:
             bool: true if the trail has been fully selected and can be defined.
         """
-        if self.clicks >= 2:
+        if self.clicks >= 3:
             return True
         return False
             

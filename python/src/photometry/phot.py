@@ -99,8 +99,9 @@ class PhotTable:
     def calibrate_against_source_list(self, source_list_file, filter) -> None:
         hdul = fits.open(source_list_file)
         zero_point, slope = hdul[1].header['ABM0'+filter], hdul[1].header['ABF0'+filter]
-        for h in hdul[1].header:
-            print(str(h) + ' = ' + str(hdul[1].header[h]))
+        self.zero_point = zero_point
+        #for h in hdul[1].header:
+        #    print(str(h) + ' = ' + str(hdul[1].header[h]))
         self.fitting_model = _LinearModel(slope, zero_point)
         
         
@@ -206,7 +207,12 @@ class PhotTable:
         target_qtable['aper_bkg'] = bkg_median_target * rectangular_aperture.area
         target_qtable['aper_sum_bkgsub'] = target_qtable['aperture_sum'] - target_qtable['aper_bkg']
 
-        cal_mag = self.fitting_model.predict( (-2.5*np.log10( target_qtable['aper_sum_bkgsub']/self.hduw.exposure_sec)).data.reshape(-1,1))
+
+        print(target_qtable['aper_bkg'])
+        print(target_qtable['aperture_sum'])
+        
+        #cal_mag = self.fitting_model.predict( (-2.5*np.log10( target_qtable['aper_sum_bkgsub']/self.hduw.exposure_sec)).data.reshape(-1,1))
+        cal_mag = (-2.5*np.log10( target_qtable['aper_sum_bkgsub']/self.hduw.exposure_sec)) + self.zero_point
         target_qtable['mag'] = cal_mag
 
         return cal_mag
