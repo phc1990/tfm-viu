@@ -54,8 +54,6 @@ except Exception:
     HAVE_PHOTOMETRY_HELPERS = False
     # --- Fallback local implementations (used only if import above fails) ---
 
-
-
 def _append_csv_row(csv_path, cols, row, include_headers=True):
         """
         Fallback CSV appender, used ONLY if photometry.py is not importable.
@@ -63,16 +61,6 @@ def _append_csv_row(csv_path, cols, row, include_headers=True):
         """
         import csv
         from pathlib import Path
-   
-        # cols = [
-        #     "target_name", "observation_id", "filter", "fits_name",
-        #     "mag_ab", "mag_err",
-        #     "count_rate", "count_rate_err",
-        #     "net_counts", "net_counts_error",
-        #     "aper_counts", "bkg_per_pix","bkg_rms_per_pix", "A_ap_eff","A_bg_eff",
-        #     "zp_ab",
-        #     "trail_height_pix","trail_semi_out_pix","trail_semi_in_pix"
-        # ]
 
         p = Path(csv_path).expanduser()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -210,245 +198,87 @@ def _build_csv_row(
     """
     Build a CSV row with both photometric and geometric information.
 
-    This intentionally includes *both* count-rate and counts fields so that:
-    - mosaics / rate images remain usable, and
-    - for exposures you can focus on net_counts / net_counts_err as requested.
+    If `result` is the string "null", None, or otherwise invalid,
+    fill all photometry-related fields with None so that the CSV
+    row is still valid and complete.
     """
 
+    # -------------------------------------------
+    # Handle "null" result (no photometry available)
+    # -------------------------------------------
+    if result is None or result == "null":
+        return {
+            "target_name": target_name,
+            "observation_id": obs_id,
+            "filter": filt,
+            "mode": mode,
+            "fits_name": fits_name,
+
+            # Photometry fields → None
+            "mag_ab": None,
+            "mag_err": None,
+            "count_rate": None,
+            "count_rate_err": None,
+            "net_counts": None,
+            "net_counts_err": None,
+            "aper_counts": None,
+            "bkg_per_pix": None,
+            "bkg_rms_per_pix": None,
+            "A_ap_eff": None,
+            "A_bg_eff": None,
+            "zp_ab": None,
+            "zp_keyword": None,
+            "zp_source_file": None,
+            "zp_source_kind": None,
+
+            # Geometry from selector
+            "trail_height_pix": getattr(selector, "height", None),
+            "trail_semi_out_pix": getattr(selector, "semi_out", None),
+            "trail_semi_in_pix": getattr(selector, "semi_in", None),
+        }
+
+    # -------------------------------------------
+    # Normal case: result contains valid photometry
+    # -------------------------------------------
     row: Dict[str, Any] = {
         "target_name": target_name,
         "observation_id": obs_id,
         "filter": filt,
         "mode": mode,
         "fits_name": fits_name,
+
         # Magnitudes
         "mag_ab": result.mag_ab,
         "mag_err": result.mag_err,
-        # Rates (for rate images / mosaics; may be NaN/None for counts-only images)
+
+        # Rates (optional depending on image type)
         "count_rate": result.count_rate,
         "count_rate_err": result.count_rate_err,
-        # Counts (this is what you requested for the exposure scenario)
+
+        # Counts
         "net_counts": result.net_counts,
         "net_counts_err": result.net_counts_err,
         "aper_counts": result.aper_counts,
-        # Background & areas
+
+        # Background and areas
         "bkg_per_pix": result.bkg_per_pix,
         "bkg_rms_per_pix": result.bkg_rms_per_pix,
         "A_ap_eff": result.A_ap_eff,
         "A_bg_eff": result.A_bg_eff,
-        # Zero-point provenance
+
+        # Zero point provenance
         "zp_ab": result.zp_ab,
         "zp_keyword": result.zp_keyword,
         "zp_source_file": result.zp_source_file,
         "zp_source_kind": result.zp_source_kind,
-        # Geometry of the trail aperture (if available on the selector)
+
+        # Geometry of trail aperture
         "trail_height_pix": getattr(selector, "height", None),
         "trail_semi_out_pix": getattr(selector, "semi_out", None),
         "trail_semi_in_pix": getattr(selector, "semi_in", None),
     }
+
     return row
-
-
-# def _main_impl():
-#     args = parse_args()
-
-#     fits_path = Path(args.fits)
-#     if not fits_path.exists():
-#         raise FileNotFoundError(f"Exposure FITS not found: {fits_path}")
-
-#     target = getattr(args, "target_name", None) or "unknown"
-#     obs_id = str(getattr(args, "observation_id", "") or "")
-#     filt = (getattr(args, "filter", "") or "").upper()
-
-#     ini_arg = getattr(args, "ini", None)
-#     ini_path = Path(ini_arg).expanduser() if ini_arg else None
-
-#     # Where to store/download ancillary products (OBSMLI, etc.)
-#     dest_root = _resolve_download_root_from_ini(ini_arg)
-#     dest_dir = _dest_dir_for(obs_id, filt, dest_root)
-
-#     # First try to get the zero point directly from screening.ini
-#     zp_ini, zp_keyword = zp_from_ini_for_filter(ini_arg, filt)
-
-#     # Only download / ensure the OM source list (OBSMLI or equivalent) for ZP
-#     # if we do NOT have a ZP from the INI.
-#     srclist_path = None
-#     srckind = None
-#     if zp_ini is None:
-#         srclist_path, srckind = ensure_om_srclist_or_obsmlist(
-#             str(obs_id),
-#             force=False,
-#             dest_root=dest_dir,
-#         )
-
-#     # No mosaic sky image at all here: we always operate on the *exposure*.
-#     used_mosaic = False
-#     chosen_fits = fits_path
-#     fits_name = chosen_fits.name
-#     mode = "EXPOSURE"
-
-#     # Open HDU wrapper and image array
-#     hduw = HDUW(file=str(chosen_fits))
-#     np.seterr(invalid="ignore")  # avoid float cast warnings
-#     arr = np.asarray(
-#         getattr(hduw, "data", getattr(hduw, "hdu", None) and getattr(hduw.hdu, "data", None)),
-#         dtype=float,
-#     )
-#     if arr is None or arr.ndim != 2:
-#         raise ValueError("expo_photometry: expected a 2-D image in the HDU.")
-
-#     arr = np.ma.masked_invalid(arr)
-
-#     pt = PhotTable(hduw)
-
-#     if zp_ini is not None:
-#         # ZP from screening.ini → no OBSMLI needed
-#         pt.zero_point = zp_ini
-#         # Keep provenance consistent with photometry.py, if available
-#         if hasattr(pt, "_zp_prov") and isinstance(getattr(pt, "_zp_prov"), dict):
-#             pt._zp_prov.update(
-#                 keyword=zp_keyword,
-#                 file=str(ini_path) if ini_path is not None else None,
-#                 kind="INI",
-#             )
-#         ini_name = ini_path.name if ini_path is not None else "INI"
-#         print(
-#             f"[EXPO_PHOT] ZP={pt.zero_point:.6f} from {ini_name} "
-#             f"key={zp_keyword} [INI]"
-#         )
-#     elif srclist_path is not None:
-#         # Fallback: original behaviour using OBSMLI / SRCLIST
-#         pt.calibrate_against_source_list(
-#             source_list_file=str(srclist_path),
-#             filter=filt,
-#             source_list_kind=str(srckind),
-#         )
-#     else:
-#         print(
-#             "[EXPO_PHOT] WARN: No ZP from INI and no SRCLIST file; "
-#             "zero_point remains unset."
-#         )
-
-#     # --- For EXPOSURES: force COUNTS mode if units are ambiguous ---
-#     # For OM FSIMAG exposures, data are in COUNTS even if BUNIT is missing.
-#     # phot.py defaults ambiguous+OBSMLI → 'rate', which is wrong here.
-#     orig_unit_fn = pt._data_unit_kind_and_bunit
-
-
-#     def _forced_counts_unit_kind():
-#         kind, bunit = orig_unit_fn()
-#         if kind == "unknown":
-#             # Treat OM exposures as COUNTS images and use EXPTIME
-#             return "counts", bunit
-#         return kind, bunit
-
-#     pt._data_unit_kind_and_bunit = _forced_counts_unit_kind  # monkey-patch for this instance
-
-    
-
-#     # UI: same behaviour as in photometry.py, but on the exposure
-#     ui = UI(hduw)
-#     try:
-#         if HAVE_PHOTOMETRY_HELPERS:
-#             from photometry import _title_for  # type: ignore
-
-#             title = _title_for(hduw, target=target, obs_id=obs_id, filt=filt, pt=pt)
-#         else:
-#             title = f"{target} | obs={obs_id} | filter={filt} | EXPO"
-#         ui.update(title=title)
-#     except Exception:
-#         pass
-
-#     # Positions from screening.py
-#     pos1 = (float(args.pos1_ra), float(args.pos1_dec))
-#     pos2 = (float(args.pos2_ra), float(args.pos2_dec))
-
-#     w = extract_wcs_from_hduw(hduw)
-#     if w is None:
-#         print(
-#             "[EXPO_PHOT][WCS] WARN: No celestial WCS found; "
-#             "pos1/pos2 will be plotted only if UI accepts raw pixels."
-#         )
-
-#     # Optional helper to draw pos1 / pos2 as in photometry.py
-#     _plot_pos1_pos2(ui, w, pos1, pos2)
-
-#     # Let the UI know about the endpoints (for markers, etc.)
-#     ui.add_sources(pos1, pos2, wcs=w)
-
-#     # Same trail selector as in photometry.py
-#     selector = TrailSelector(height=5.0, semi_out=5.0, finalize_on_click=False)
-#     sel = ui.select_trail(selector)
-
-#     # Match photometry.py behavior exactly:
-#     ap_box, ann_box = _normalize_selection_to_ap_ann(sel)
-#     if ap_box is None:
-#         print("[EXPO_PHOT] No aperture selected; no photometry performed.")
-#         return
-
-#     # Perform photometry
-#     result = pt.perform_trail_photometry(
-#         rectangular_aperture=ap_box,
-#         rectangular_annulus=ann_box,
-#         debug=True,
-#     )
-
-#     # --- Export PNG of the UI with the aperture and annulus overplotted ---
-#     try:
-#         png_path = _png_path_for(chosen_fits, target)
-#         try:
-#             # If your UI exposes a helper like this, use it:
-#             if hasattr(ui, "save_png"):
-#                 ui.save_png(str(png_path))
-#             else:
-#                 # Fallback: try saving the matplotlib figure directly
-#                 fig = getattr(ui, "fig", None)
-#                 if fig is not None:
-#                     fig.savefig(str(png_path), dpi=150)
-#         except Exception as e:
-#             print(f"[EXPO_PHOT] WARN: failed to save PNG ({png_path}): {e}")
-#     except Exception as e:
-#         print(f"[EXPO_PHOT] WARN: PNG path could not be constructed: {e}")
-
-#     # --- Build CSV row and append (counts + counts_err included) ---
-#     row = _build_csv_row(
-#         target_name=target,
-#         obs_id=obs_id,
-#         filt=filt,
-#         fits_name=fits_name,
-#         mode=mode,
-#         result=result,
-#         selector=selector,
-#         pt=pt,
-#     )
-
-#     _append_csv_row(row)
-
-#     # Mirror the MOSAIC summary line from photometry.py, but label as EXPO
-#     print(
-#         "[PHOT] EXPO: "
-#         f"mag={result.mag_ab}  "
-#         f"mag_err={result.mag_err}  "
-#         f"rate={result.count_rate}  "
-#         f"rate_err={result.count_rate_err}  "
-#         f"file={fits_name}"
-#     )
-
-#     print("[EXPO_PHOT] Photometry row written.")
-#     print(
-#         f"  mag_AB      = {result.mag_ab:.4f} ± "
-#         f"{result.mag_err if result.mag_err is not None else float('nan'):.4f}"
-#     )
-#     if result.net_counts is not None:
-#         print(
-#             f"  net_counts  = {result.net_counts:.3f} ± "
-#             f"{result.net_counts_err if result.net_counts_err is not None else float('nan'):.3f}"
-#         )
-#     if result.count_rate is not None:
-#         print(
-#             f"  count_rate  = {result.count_rate:.5g} ± "
-#             f"{result.count_rate_err if result.count_rate_err is not None else float('nan'):.5g}"
-#         )
 
 def _main_impl():
 
@@ -464,8 +294,6 @@ def _main_impl():
 
     ini_arg = getattr(args, "ini", None)
     ini_path = Path(ini_arg).expanduser() if ini_arg else None
-
-
 
     # --- Resolve CSV path from [PHOTOMETRY_RESULTS] in screening.ini ---
     csv_path, include_headers = resolve_photometry_csv_from_ini(ini_arg)
@@ -489,35 +317,6 @@ def _main_impl():
     # Where to store/download ancillary products (OBSMLI, etc.)
     dest_root = _resolve_download_root_from_ini(ini_arg)
     dest_dir = _dest_dir_for(obs_id, filt, dest_root)
-
-# def _main_impl():
-#     args = parse_args()
-
-#     fits_path = Path(args.fits)
-#     if not fits_path.exists():
-#         raise FileNotFoundError(f"Exposure FITS not found: {fits_path}")
-
-#     target = getattr(args, "target_name", None) or "unknown"
-#     obs_id = str(getattr(args, "observation_id", "") or "")
-#     filt = (getattr(args, "filter", "") or "").upper()
-
-#     ini_arg = getattr(args, "ini", None)
-#     ini_path = Path(ini_arg).expanduser() if ini_arg else None
-
-#     # --- NEW: resolve CSV path via the same logic as photometry.py ---
-#     csv_path, include_headers = resolve_photometry_csv_from_ini(ini_arg)
-#     if csv_path is None:
-#         from pathlib import Path
-#         csv_path = Path("expo_photometry.csv")
-#         include_headers = True
-#         print(f"[EXPO_PHOT] Using fallback CSV: {csv_path}")
-
-#     # Ensure the CSV file exists (header written if requested)
-#     ensure_photometry_csv_headers(csv_path, include_headers=include_headers)
-
-    # # Where to store/download ancillary products (OBSMLI, etc.)
-    # dest_root = _resolve_download_root_from_ini(ini_arg)
-    # dest_dir = _dest_dir_for(obs_id, filt, dest_root)
 
     # (rest of your ZP / OBSMLI / HDUW / UI / trail selection logic goes here)
     # ZP from INI if available (previous step you added)
@@ -589,13 +388,9 @@ def _main_impl():
 
     # --- UI: show exposure, select trail, perform photometry ---
     ui = UI(hduw)
-    #ui.ax.set_title(f"{target} | obs={obs_id} | {fits_name} | {mode} | filter={filt}")
     ui.ax.set_title(f"{target} | obs={obs_id} | {fits_name}")
     ui.add_markers_from_args(args)  # or your equivalent call for pos1/pos2
 
-    # selector = TrailSelector(ui=ui, pt=pt)
-    # trail = selector.ask_trail()
-    
     selector = TrailSelector(height=5.0, semi_out=5.0, finalize_on_click=False)
     
     try:
@@ -603,23 +398,24 @@ def _main_impl():
 
     except Exception as e:
         print(f"[PHOT] WARN: UI selection failed: {e}")
-        _append_csv_row(csv_path, cols, target=target, obs_id=obs_id, fits_file=fits_name, filt=filt,
-                      mode="EXPOSURE",
-                      reason="ui_error")
         return
 
     ap_box, ann_box = _normalize_selection_to_ap_ann(sel)
 
-
     if ap_box is None:
-        _append_csv_row(csv_path, cols, target=target, obs_id=obs_id, fits_file=fits_name, filt=filt,
-                      mode="EXPOSURE",
-                      reason="no_selection")
+        print(f"[PHOT] User escapes selection. Dubious detection-no photometry result after all")
+        row = _build_csv_row(
+            target_name=target,
+            obs_id=obs_id,
+            filt=filt,
+            fits_name=fits_name,
+            mode=mode,
+            result=None,
+            selector=None,
+            pt=pt,
+        )
+        _append_csv_row(csv_path, cols, row, include_headers=include_headers)
         return
-
-
-    # result = selector.perform_trail_photometry(trail)
-    # ui.close()
 
     # --- Save PNG screenshot (if PNG_FILEPATH configured) ---
     try:
@@ -649,8 +445,6 @@ def _main_impl():
         
     except Exception as e:
         print(f"[PHOT] WARN: photometry failed: {e}")
-        _append_csv_row(csv_path, cols, target=target, obs_id=obs_id, fits_file=fits_name, filt=filt,
-                      mode="CURRENT", reason=str(e))
         return
 
 
