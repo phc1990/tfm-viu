@@ -1,219 +1,474 @@
-"""Photometry module.
+# -*- coding: utf-8 -*-
+"""
+phot.py — trail photometry core with units-aware handling + uncertainty
+- RATE images (counts/s/pix): compute c and σ_c directly from region stats.
+- COUNTS images: derive EXPTIME robustly, then compute c and σ_c from counts.
+- If units ambiguous and ZP is from OBSMLI, default to RATE mode.
 """
 
-from re import A
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Dict, Tuple, List
+
+import math
 import numpy as np
-
-from photutils import (aperture_photometry,
-                       CircularAperture,
-                       CircularAnnulus,
-                       RectangularAperture,
-                       RectangularAnnulus)
-
-from astropy import units as u
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from astropy.coordinates import SkyCoord
 
-from astroquery.mast import Catalogs
+# photutils (new API first; fallback)
+try:
+    from photutils.aperture import (
+        aperture_photometry,
+        RectangularAperture,
+        RectangularAnnulus,
+    )
+except Exception:
+    from photutils import (
+        aperture_photometry,
+        RectangularAperture,
+        RectangularAnnulus,
+    )
 
-from sklearn import linear_model
-
-from scipy import stats
-
-from src.photometry.hdu import HDUW
+AB_PROP_COEFF = 1.085736  # 2.5/ln(10)
 
 
-class _LinearModel:
-    def __init__(self, a: float, b: float) -> None:
-        self.a = a
-        self.b = b
-    
-    def predict(self, x: float) -> float:
-        return self.a * x + self.b
+@dataclass
+class PhotometryResult:
+    # Magnitudes and uncertainties
+    mag_ab: Optional[float] = None
+    mag_err: Optional[float] = None
+
+    # Rates and uncertainties
+    count_rate: Optional[float] = None
+    count_rate_err: Optional[float] = None
+
+    # Counts (filled for COUNTS images; N/A for mosaics unless derivable)
+    net_counts: Optional[float] = None
+    net_counts_err: Optional[float] = None
+    aper_counts: Optional[float] = None  # Cap (counts or counts/s depending on unit)
+
+    # Background / geometry
+    bkg_per_pix: Optional[float] = None            # mean background per pixel (in image units)
+    bkg_rms_per_pix: Optional[float] = None        # rms (std) per pixel (in image units)
+    A_ap_eff: Optional[float] = None               # effective aperture pixels (weights sum)
+    A_bg_eff: Optional[float] = None               # effective bg pixels (weights sum)
+
+    # Calibration provenance
+    zp_ab: Optional[float] = None
+    zp_keyword: Optional[str] = None
+    zp_source_file: Optional[str] = None
+    zp_source_kind: Optional[str] = None
 
 
 class PhotTable:
-    """Photometry Table wrapper. It contains a native astropy QTable.
-    
-    https://docs.astropy.org/en/stable/api/astropy.table.QTable.html#astropy.table.QTable
-    """
-    
-    def __init__(self, hduw: HDUW) -> None:
-        """Constructor.
-
-        Args:
-            hduw (HDUW): Header Data Unit(s) (HDU) wrapper.
-        """
+    def __init__(self, hduw) -> None:
         self.hduw = hduw
-    
-    # TODO remove sources close to edges
-    def add_sources_apertures(  self, sources,
-                                aperture_radius: int,
-                                annular_aperture_start_offset: int,
-                                annular_aperture_end_offset: int) -> None:
-        """Performs and adds sources aperture information to the native table.
+        self.zero_point: Optional[float] = None
+        self._zp_prov: Dict[str, Optional[str]] = {"keyword": None, "file": None, "kind": None}
 
-        Args:
-            sources (_type_): _description_
-            aperture_radius (int): _description_
-            annular_aperture_start_offset (int): _description_
-            annular_aperture_end_offset (int): _description_
+    # ----------------- helpers -----------------
+
+    @staticmethod
+    def _filter_to_band(filter_code: str) -> str:
+        f = (filter_code or "").strip().upper()
+        return {"L": "UVW1", "M": "UVM2", "S": "UVW2", "V": "V", "B": "B", "U": "U"}.get(f, f)
+
+    def _exptime_from(self) -> Optional[float]:
         """
-            
-        annulus_radius = [aperture_radius + annular_aperture_start_offset, 
-                          aperture_radius + annular_aperture_end_offset]
+        Robust exposure discovery across all HDUs.
 
-        positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
-        self.source_apertures = CircularAperture(   positions,
-                                                    r=aperture_radius)
-
-        # https://photutils.readthedocs.io/en/stable/api/photutils.aperture.aperture_photometry.html#photutils.aperture.aperture_photometry
-        self.qtable = aperture_photometry(  self.hduw.hdu.data, 
-                                            apertures=self.source_apertures)
-
-        annulus_aperture = CircularAnnulus( positions,
-                                            r_in=annulus_radius[0],
-                                            r_out=annulus_radius[1])
-
-        annulus_masks = annulus_aperture.to_mask(method='center')
-
-        bkg_median_arr = []
-        for mask in annulus_masks:
-            annulus_data = mask.multiply(self.hduw.hdu.data)
-            #TODO understand this
-            annulus_data_1d = annulus_data[mask.data > 0]
-            _, median_sigclip, _ = sigma_clipped_stats(annulus_data_1d)
-            bkg_median_arr.append(median_sigclip)
-
-        bkg_median_arr = np.array(bkg_median_arr)
-        self.qtable['annulus_median'] = bkg_median_arr
-        self.qtable['aper_bkg'] = bkg_median_arr * self.source_apertures.area
-        self.qtable['aper_sum_bkgsub'] = self.qtable['aperture_sum'] - self.qtable['aper_bkg']
-
-        # TODO why is aper_sum_bkgsub a noise contribution? Why are SNR > 1?
-        self.qtable['noise'] = np.sqrt(self.qtable['aper_sum_bkgsub'] + self.qtable['aper_bkg'])
-        self.qtable['SNR'] = self.qtable['aper_sum_bkgsub'] / self.qtable['noise']
-        
-    
-    def calibrate_against_source_list(self, source_list_file, filter) -> None:
-        hdul = fits.open(source_list_file)
-        zero_point, slope = hdul[1].header['ABM0'+filter], hdul[1].header['ABF0'+filter]
-        self.zero_point = zero_point
-        #for h in hdul[1].header:
-        #    print(str(h) + ' = ' + str(hdul[1].header[h]))
-        self.fitting_model = _LinearModel(slope, zero_point)
-        
-        
-    def calibrate_against_catalogue(self, start_magnitude: float, end_magnitude: float) -> None:
-        field = SkyCoord(self.hduw.wcs.wcs.crval[0], self.hduw.wcs.wcs.crval[1], unit=u.deg)
-
-        # TODO understand this params
-        # For sure radius to make sure we don't miss out on any stars
-        """FIXME
-        - Maybe we can use PANSTAARS -> No
-        - Elena to send the query to obtain biproduct of catalog
-        - Use XMM SUSS
+        Strategy:
+        1) Use attributes on the HDUW wrapper (texp / exptime) if present.
+        2) Look for common exposure keywords in the header of the wrapped HDU.
+        3) If the wrapper exposes a 'file' attribute, optionally open the FITS
+           and look in all HDUs + derive from MJD-END/MJD-OBS or DATE-END/DATE-OBS.
         """
-        catalog = Catalogs.query_criteria(coordinates=field.to_string(), radius=0.25,
-                                        catalog="PANSTARRS", table="mean", data_release="dr2",
-                                        nStackDetections=[("gte", 1)],
-                                        iMeanPSFMag=[("lt", 21), ("gt", 1)], 
-                                        iMeanPSFMagErr=[("lt", 0.02), ("gt", 0.0)], 
-                                        columns=['objName','raMean', 'decMean','nDetections',
-                                                'iMeanPSFMag', 'iMeanPSFMagErr' ])
+        # 1) Direct attributes on the wrapper (HDUW)
+        for attr in ("exptime", "texp", "exposure_time"):
+            try:
+                if hasattr(self.hduw, attr):
+                    val = getattr(self.hduw, attr)
+                    if val is not None:
+                        val = float(val)
+                        if np.isfinite(val) and val > 0:
+                            # print(f"[PHOT] Using HDUW.{attr}={val} s")
+                            return val
+            except Exception:
+                pass
+
+        # 2) Look into the header of the wrapped HDU first
+        KEY_CANDIDATES = (
+            "EXPTIME",
+            "EXPOSURE",
+            "ONTIME",
+            "EXP_TIME",
+            "EXPOSURE_TIME",
+            "TELAPSE",
+        )
+
+        hdr = None
+        try:
+            h = getattr(self.hduw, "hdu", None)
+            hdr = getattr(h, "header", None)
+        except Exception:
+            hdr = None
+
+        if hdr is not None:
+            for k in KEY_CANDIDATES:
+                if k in hdr and hdr[k] is not None:
+                    try:
+                        val = float(hdr[k])
+                        if np.isfinite(val) and val > 0:
+                            # print(f"[PHOT] Using {k}={val} s from HDUW.hdu.header")
+                            return val
+                    except Exception:
+                        continue
+
+        # 3) If the wrapper knows the file path, fall back to full-file search + MJD/DATE
+        fpath = getattr(self.hduw, "file", None)
+        if not fpath:
+            return None  # nothing more we can do
+
+        try:
+            from astropy.time import Time
+            with fits.open(str(fpath), memmap=False) as hdul:
+                # 3a) Search all HDUs for exposure keywords
+                for h in hdul:
+                    hdr = getattr(h, "header", None)
+                    if not hdr:
+                        continue
+                    for k in KEY_CANDIDATES:
+                        if k in hdr and hdr[k] is not None:
+                            try:
+                                val = float(hdr[k])
+                                if np.isfinite(val) and val > 0:
+                                    # print(f"[PHOT] Using {k}={val} s from file={fpath}")
+                                    return val
+                            except Exception:
+                                continue
+
+                # 3b) Derive from MJD-END / MJD-OBS or DATE-END / DATE-OBS in primary header
+                prim = hdul[0].header if len(hdul) > 0 else None
+                if prim is not None:
+                    if all(k in prim and prim[k] is not None for k in ("MJD-END", "MJD-OBS")):
+                        try:
+                            dt = (float(prim["MJD-END"]) - float(prim["MJD-OBS"])) * 86400.0
+                            if np.isfinite(dt) and dt > 0:
+                                # print(f"[PHOT] Using MJD-END/MJD-OBS → {dt} s")
+                                return dt
+                        except Exception:
+                            pass
+                    if all(k in prim and prim[k] for k in ("DATE-END", "DATE-OBS")):
+                        try:
+                            t_end = Time(str(prim["DATE-END"]), format="isot", scale="utc")
+                            t_obs = Time(str(prim["DATE-OBS"]), format="isot", scale="utc")
+                            dt = (t_end - t_obs).sec
+                            if np.isfinite(dt) and dt > 0:
+                                # print(f"[PHOT] Using DATE-END/DATE-OBS → {dt} s")
+                                return float(dt)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        return None
 
 
-        source_apertures_coordinates = self.source_apertures.to_sky(self.hduw.wcs).positions
-        catalogue_coordinates = SkyCoord(   ra=catalog['raMean'] * u.deg,
-                                            dec=catalog['decMean'] * u.deg)
+    def _effective_area_from_mask(self, ap) -> float:
+        mask = ap.to_mask(method='exact')
+        if isinstance(mask, (list, tuple)):
+            area = 0.0
+            for m in mask:
+                data = m.data
+                if data is not None:
+                    area += np.nansum(data)
+            return float(area)
+        data = mask.data
+        return float(np.nansum(data)) if data is not None else float(ap.area)
 
+    def _effective_area_bg_from_mask(self, ann: Optional[RectangularAnnulus]) -> Optional[float]:
+        if ann is None:
+            return None
+        mask = ann.to_mask(method='exact')
+        if isinstance(mask, (list, tuple)):
+            area = 0.0
+            for m in mask:
+                data = m.data
+                if data is not None:
+                    area += np.nansum(data)
+            return float(area)
+        data = mask.data
+        return float(np.nansum(data)) if data is not None else None
 
-        # https://docs.astropy.org/en/stable/api/astropy.coordinates.SkyCoord.html#astropy.coordinates.SkyCoord.match_to_catalog_sky    
-        # xm_id: indices of the catalog that have matched
-        # xm_ang_distance: angular separation (Angle)
-        # _: would have been 3D distance
-        cross_matching_indices, cross_matching_angular_separation, _ = source_apertures_coordinates.match_to_catalog_sky(catalogue_coordinates, nthneighbor=1)
+    def _bkg_stats_from_annulus(self, data: np.ndarray, ann: Optional[RectangularAnnulus]) -> Tuple[float, float]:
+        """
+        Mean and std in the annulus footprint; if not enough pixels, use global sigma-clipped stats.
+        Returns (mean, std) in the same units as `data` (counts or counts/s).
+        """
+        if ann is not None:
+            mask = ann.to_mask(method='exact')
+            vals: List[np.ndarray] = []
+            if isinstance(mask, (list, tuple)):
+                for m in mask:
+                    cut = m.cutout(data)
+                    w = m.data
+                    if cut is not None and w is not None:
+                        vals.append(cut[w > 0])
+                if vals:
+                    ann_values = np.concatenate(vals)
+                else:
+                    ann_values = np.array([])
+            else:
+                cut = mask.cutout(data)
+                w = mask.data
+                ann_values = cut[w > 0] if (cut is not None and w is not None) else np.array([])
 
-        # TODO need to understand what the equivalent for PIXSCALX is in our system
-        #max_sep = hdu.header.get('PIXSCALX') * fwhm * u.arcsec
-        maximum_separation = 2.5 * u.arcsec
-        
-        # Record the RA/Dec of apertures
-        self.qtable['ra'] = source_apertures_coordinates.ra.value
-        self.qtable['dec'] = source_apertures_coordinates.dec.value
+            finite = np.isfinite(ann_values)
+            if ann_values.size > 20 and finite.sum() >= 20:
+                mean, med, std = sigma_clipped_stats(ann_values[finite], sigma=3.0, maxiters=5)
+                return float(mean), float(std)
 
-        separation_constraint = cross_matching_angular_separation < maximum_separation
-        
-        ins_mag = -2.5*np.log10( self.qtable[separation_constraint]['aper_sum_bkgsub']/self.hduw.exposure_sec )
-        # TODO this obtains the magnitude regardless of the wavelenght? Should this not be based on wavelength?
-        # TODO not used?
-        cat_mag = catalog['iMeanPSFMag'][cross_matching_indices[separation_constraint]]
+        # Fallback: whole image (robust)
+        mean, med, std = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
+        return float(mean), float(std)
 
-        # TODO looks like there was a typo here where it had '--'
-        ins_err = ins_mag - 2.5*np.log10( (self.qtable[separation_constraint]['aper_sum_bkgsub'] + self.qtable[separation_constraint]['noise'])/self.hduw.exposure_sec )
-        cat_err = catalog['iMeanPSFMagErr'][cross_matching_indices[separation_constraint]]
+    def _data_unit_kind_and_bunit(self) -> (str, Optional[str]):
+        """
+        Inspect headers to decide if image is 'rate' or 'counts'.
+        Returns ('rate'|'counts'|'unknown', bunit_string_or_none)
+        """
+        bunit_val: Optional[str] = None
+        try:
+            with fits.open(str(self.hduw.file), memmap=False) as hdul:
+                cand_hdrs = []
+                if len(hdul) > 1 and hasattr(hdul[1], "header"):
+                    cand_hdrs.append(hdul[1].header)
+                if hasattr(hdul[0], "header"):
+                    cand_hdrs.append(hdul[0].header)
+                cand_hdrs += [h.header for h in hdul[2:] if hasattr(h, "header")]
 
-        # TODO needed to add .0 here otherwise ins_mag was stored as an int
-        self.qtable['ins_mag'] = 0.0
-        self.qtable['ins_mag'][separation_constraint] = ins_mag
+                for hdr in cand_hdrs:
+                    for key in ("BUNIT", "BUNIT1", "BUNIT2"):
+                        if key in hdr and hdr[key]:
+                            bunit_val = str(hdr[key]).strip()
+                            break
+                    if bunit_val:
+                        break
+        except Exception:
+            pass
 
-        fitting_condition = (cat_mag>start_magnitude) & (cat_mag<end_magnitude) & (~cat_mag.mask) & (~np.isnan(ins_mag))
+        if bunit_val:
+            u = bunit_val.lower().replace(" ", "")
+            # common variants for rates
+            if any(token in u for token in ("count/s", "counts/s", "ct/s", "cnt/s", "s^-1", "s-1")):
+                return "rate", bunit_val
+            # common variants for counts
+            if "count" in u or "counts" in u or "cnt" in u:
+                return "counts", bunit_val
 
-        # Create two mock arrays for linear regression
-        X = ins_mag[fitting_condition].reshape(-1, 1)
-        y = cat_mag[fitting_condition].reshape(-1, 1)
+        return "unknown", bunit_val
 
-        # Simple linear regression
-        linear = linear_model.LinearRegression()
-        linear.fit(X, y)
-        
-        # sigma clipping pour choisir le threshold
-        MAD = stats.median_abs_deviation(X-y)
-        # TODO not used
-        _, _, sig = sigma_clipped_stats(X-y)
+    # ----------------- calibration -----------------
 
-        # RANSAC linear regressions
-        ransac = linear_model.RANSACRegressor(residual_threshold=3*MAD)
-        ransac.fit(X, y)
+    def calibrate_against_source_list(
+        self,
+        source_list_file: str,
+        filter: str,
+        source_list_kind: Optional[str] = None,
+    ) -> None:
+        fpath = Path(source_list_file).expanduser().resolve()
+        if not fpath.exists():
+            raise FileNotFoundError(f"SRCLIST file not found: {fpath}")
 
-        # Choose the model with the slope closest to 1
-        if (abs(linear.coef_[0][0] - 1.0) <= abs(ransac.estimator_.coef_[0][0] - 1.0)):
-            self.fitting_model = linear
-        else:
-            self.fitting_model = ransac
+        filt = (filter or "").strip().upper()
+        band = self._filter_to_band(filt)
 
-        # Positive values
-        positive = np.where( self.qtable['aper_sum_bkgsub']>0 )
+        with fits.open(str(fpath), memmap=False) as hdul:
+            if (source_list_kind or "").upper() == "OBSMLI" and len(hdul) > 1:
+                hdr = hdul[1].header
+                key = f"ABM0{band}"
+                if key in hdr and hdr[key] is not None:
+                    self.zero_point = float(hdr[key])
+                    self._zp_prov.update(keyword=key, file=str(fpath), kind="OBSMLI")
+                    print(f"[PHOT] ZP={self.zero_point:.6f} from {fpath.name} key={key} [OBSMLI]")
+                    return
 
-        # Compute calibrated mag
-        self.qtable['mag'] = 0.
-        self.qtable['mag'][positive] = self.fitting_model.predict( (-2.5*np.log10( self.qtable[positive]['aper_sum_bkgsub']/self.hduw.exposure_sec)).data.reshape(-1,1)).flatten()
+            common_keys = [
+                "ABMAGZP", "MAGZPT", "PHOTZP", "MAGZERO", "ZEROPOINT", "OMZP",
+                f"ABMAGZP_{filt}", f"MAGZPT_{filt}", f"OMZP_{filt}", f"ZEROPOINT_{filt}",
+                f"ABM0{band}",
+            ]
+            headers = [hdul[0].header] + [h.header for h in hdul[1:] if hasattr(h, "header")]
+            for hdr in headers:
+                for key in common_keys:
+                    if key in hdr and hdr[key] is not None:
+                        self.zero_point = float(hdr[key])
+                        self._zp_prov.update(keyword=key, file=str(fpath), kind=(source_list_kind or "OMSRLI"))
+                        print(f"[PHOT] ZP={self.zero_point:.6f} from {fpath.name} key={key} [{self._zp_prov['kind']}]")
+                        return
 
-        # Remove points not used for the fitting
-        fitting_condition = self.qtable['mag'] > 0
-        self.qtable = self.qtable[fitting_condition]
+            tokens = ("ZP", "ZERO", "MAGZ", "ABMAG", "PHOTZ")
+            for hdr in headers:
+                for k in hdr.keys():
+                    uk = k.upper()
+                    if any(t in uk for t in tokens):
+                        try:
+                            self.zero_point = float(hdr[k])
+                            self._zp_prov.update(keyword=k, file=str(fpath), kind=(source_list_kind or "UNKNOWN"))
+                            print(f"[PHOT] ZP={self.zero_point:.6f} from {fpath.name} key={k} [{self._zp_prov['kind']}]")
+                            return
+                        except Exception:
+                            pass
 
-    def perform_trail_photometry(self, rectangular_aperture: RectangularAperture, rectangular_annulus: RectangularAnnulus) -> float:
-        target_qtable = aperture_photometry(self.hduw.hdu.data, rectangular_aperture)
+        raise KeyError(f"AB zero point not found in {fpath} (filter={filt}, kind={source_list_kind}).")
 
-        annulus_mask_target = rectangular_annulus.to_mask(method='center')
-        annulus_data_target = annulus_mask_target.multiply(self.hduw.hdu.data)
-        annulus_data_target_1d = annulus_data_target[annulus_mask_target.data > 0]
-        _, median_sigclip_target, _ = sigma_clipped_stats(annulus_data_target_1d)
-        bkg_median_target = median_sigclip_target
+    # ----------------- photometry (units-aware) -----------------
 
-        target_qtable['annulus_median'] = bkg_median_target
-        target_qtable['aper_bkg'] = bkg_median_target * rectangular_aperture.area
-        target_qtable['aper_sum_bkgsub'] = target_qtable['aperture_sum'] - target_qtable['aper_bkg']
+    def perform_trail_photometry(
+        self,
+        rectangular_aperture: RectangularAperture,
+        rectangular_annulus: Optional[RectangularAnnulus] = None,
+        debug: bool = False,
+    ) -> PhotometryResult:
+        if self.zero_point is None:
+            raise RuntimeError("Zero point not calibrated. Call calibrate_against_source_list(...) first.")
 
+        data = np.asarray(self.hduw.data, dtype=float)
+        if data.ndim != 2:
+            raise ValueError("HDUW data must be a 2-D image.")
 
-        print(target_qtable['aper_bkg'])
-        print(target_qtable['aperture_sum'])
-        
-        #cal_mag = self.fitting_model.predict( (-2.5*np.log10( target_qtable['aper_sum_bkgsub']/self.hduw.exposure_sec)).data.reshape(-1,1))
-        cal_mag = (-2.5*np.log10( target_qtable['aper_sum_bkgsub']/self.hduw.exposure_sec)) + self.zero_point
-        target_qtable['mag'] = cal_mag
+        # Units?
+        unit_kind, bunit_str = self._data_unit_kind_and_bunit()
+        # If ambiguous AND ZP came from OBSMLI, default to rate-mode
+        if unit_kind == "unknown" and (self._zp_prov.get("kind") or "").upper() == "OBSMLI":
+            unit_kind = "rate"
 
-        return cal_mag
-    
+        # Aperture sum (exact) and effective areas
+        phot_ap = aperture_photometry(data, rectangular_aperture, method='exact')
+        Cap = float(phot_ap['aperture_sum'][0])
+        A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
+        A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+
+        # Background stats (mean, std) from annulus (or global fallback)
+        bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)
+
+        # -------- RATE images (counts/s/pix) --------
+        if unit_kind == "rate":
+            # Total source rate in aperture:
+            # Cap is in counts/s (sum over pixels); background contribution is mean_rate*area
+            Cnet_rate = Cap - bkg_mean * A_ap_eff
+            if not np.isfinite(Cnet_rate) or Cnet_rate <= 0:
+                raise ValueError("Non-positive count rate (rate image); cannot compute magnitude.")
+
+            # Uncertainty in rate:
+            # Background variance in rate units:
+            var_bkg_rate = np.nan
+            if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+                var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+
+            # Effective exposure time from local background: t_eff ≈ mean/std^2 (if > 0)
+            t_eff = None
+            if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
+                t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
+
+            # Source Poisson variance in rate units:
+            var_src_rate = np.nan
+            if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
+                var_src_rate = Cap / t_eff
+
+            terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
+            count_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else np.nan
+
+            # Magnitude and uncertainty
+            c = Cnet_rate
+            m_ab = float(self.zero_point - 2.5 * math.log10(c))
+            m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
+
+            if debug:
+                print("[TrailPhotometry DEBUG — RATE image]")
+                print(f"  BUNIT                  = {bunit_str}")
+                print(f"  Aperture sum Cap      = {Cap:.3f} (counts/s)")
+                print(f"  bkg_mean              = {bkg_mean:.6f} (counts/s/pix)")
+                print(f"  bkg_rms               = {bkg_std:.6f} (counts/s/pix)")
+                print(f"  A_ap_eff              = {A_ap_eff:.3f} (pix)")
+                print(f"  A_bg_eff              = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+                print(f"  Net rate Cnet_rate    = {Cnet_rate:.6f} (counts/s)")
+                print(f"  ZP used               = {self.zero_point:.6f} ({self._zp_prov})")
+                print(f"  m_AB                  = {m_ab:.6f} mag")
+
+            return PhotometryResult(
+                mag_ab=m_ab,
+                mag_err=m_err if np.isfinite(m_err) else None,
+                count_rate=c,
+                count_rate_err=count_rate_err if np.isfinite(count_rate_err) else None,
+                net_counts=None,
+                net_counts_err=None,
+                aper_counts=None,  # Cap is RATE sum; keep None to avoid confusion
+                bkg_per_pix=bkg_mean,
+                bkg_rms_per_pix=bkg_std,
+                A_ap_eff=A_ap_eff,
+                A_bg_eff=A_bg_eff,
+                zp_ab=self.zero_point,
+                zp_keyword=self._zp_prov["keyword"],
+                zp_source_file=self._zp_prov["file"],
+                zp_source_kind=self._zp_prov["kind"],
+            )
+
+        # -------- COUNTS images --------
+        exptime = self._exptime_from()
+        if exptime is None or not np.isfinite(exptime) or exptime <= 0:
+            raise ValueError("Invalid or missing EXPTIME.")
+
+        Cnet = Cap - bkg_mean * A_ap_eff
+        c = Cnet / exptime
+        if not np.isfinite(c) or c <= 0:
+            raise ValueError("Non-positive count rate; cannot compute magnitude.")
+        m_ab = float(self.zero_point - 2.5 * math.log10(c))
+
+        # Uncertainty in COUNTS domain:
+        # Background variance in counts:
+        var_bkg_counts = np.nan
+        if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+            var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+
+        # Source Poisson variance in counts:
+        var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
+
+        terms_counts = [v for v in (var_bkg_counts, var_src_counts) if np.isfinite(v)]
+        Cnet_err = float(np.sqrt(max(sum(terms_counts), 0.0))) if terms_counts else np.nan
+        count_rate_err = Cnet_err / exptime if np.isfinite(Cnet_err) else np.nan
+        m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
+
+        if debug:
+            print("[TrailPhotometry DEBUG — COUNTS image]")
+            print(f"  BUNIT                  = {bunit_str}")
+            print(f"  Aperture sum Cap      = {Cap:.3f} (counts)")
+            print(f"  bkg_mean              = {bkg_mean:.6f} (counts/pix)")
+            print(f"  bkg_rms               = {bkg_std:.6f} (counts/pix)")
+            print(f"  A_ap_eff              = {A_ap_eff:.3f} (pix)")
+            print(f"  A_bg_eff              = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+            print(f"  EXPTIME               = {exptime:.3f} (s)")
+            print(f"  Net counts Cnet       = {Cnet:.3f} (counts)")
+            print(f"  Count rate c          = {c:.6f} (counts/s)")
+            print(f"  ZP used               = {self.zero_point:.6f} ({self._zp_prov})")
+            print(f"  m_AB                  = {m_ab:.6f} mag")
+
+        return PhotometryResult(
+            mag_ab=m_ab,
+            mag_err=m_err if np.isfinite(m_err) else None,
+            count_rate=c,
+            count_rate_err=count_rate_err if np.isfinite(count_rate_err) else None,
+            net_counts=Cnet,
+            net_counts_err=Cnet_err if np.isfinite(Cnet_err) else None,
+            aper_counts=Cap,
+            bkg_per_pix=bkg_mean,
+            bkg_rms_per_pix=bkg_std,
+            A_ap_eff=A_ap_eff,
+            A_bg_eff=A_bg_eff,
+            zp_ab=self.zero_point,
+            zp_keyword=self._zp_prov["keyword"],
+            zp_source_file=self._zp_prov["file"],
+            zp_source_kind=self._zp_prov["kind"],
+        )
