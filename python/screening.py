@@ -710,6 +710,14 @@ def main():
     # Prepare output headers using the same metadata columns
     ensure_screening_headers(screening_csv, screening_headers, input_fieldnames)
 
+    from src.screening.xsa import HttpCurlCrawler
+
+    crawler = HttpCurlCrawler(
+        download_dir=download_root,
+        base_url="https://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio",
+        regex_patern="^.*?SIMAG.*?\.FTZ$"
+    )
+
     try:
         for row in rows:
             try:
@@ -736,9 +744,32 @@ def main():
                         target_name,
                         regex_tmpl,
                     )
-                if not fits_paths:
-                    fits_paths = find_all_fits_fallback(download_root, observation_id, filt)
 
+                # if not fits_paths:
+                #     fits_paths = find_all_fits_fallback(download_root, observation_id, filt)
+                import src.screening.observation as observation
+
+                if not fits_paths:
+                    crawler.crawl(
+                        observation=observation.Observation(
+                            id=observation_id,
+                            object="ASDF",
+                            ra1=ra1,
+                            dec1=dec1,
+                            ra2=ra2,
+                            dec2=dec2,
+                            filters=[filt],
+                        )
+                    )
+
+                fits_paths = find_all_fits_with_regex(
+                        download_root,
+                        observation_id,
+                        filt,
+                        target_name,
+                        regex_tmpl,
+                    )
+                
                 if not fits_paths:
                     print(
                         f'[WARN] No FITS found under {download_root}/* for '
@@ -876,7 +907,7 @@ def main():
             #     break
             except Exception as e:
                 print(f'[ERROR] Failed on row: {e}', file=sys.stderr)
-                continue
+                raise e
     except KeyboardInterrupt:
         # Global Ctrl+C: keep everything that was already written to CSV
         print('\n[INFO] Aborted by user.')
