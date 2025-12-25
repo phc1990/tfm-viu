@@ -34,53 +34,223 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple, List
-from collections.abc import Sequence
+from typing import Any, Dict, Iterable, Optional, Union, Tuple, Sequence, List
 
 # Make XQuartz available (no XPA required in this build)
 os.environ.setdefault('DISPLAY', ':0')
 
-# Column names
+# Columns
 OBS_ID_COLS   = ('observation_id', 'obsid', 'observation')
 TARGET_COLS   = ('sso_name', 'target_name', 'target')
 FILTER_COLS   = ('filter', 'om_filter', 'band')
-
+DECISION_COLS = ('DECISION')
 POS1_RA_COLS  = ('position_1_ra', 'ra_deg_1')
 POS1_DEC_COLS = ('position_1_dec', 'dec_deg_1')
 POS2_RA_COLS  = ('position_2_ra', 'ra_deg_2')
 POS2_DEC_COLS = ('position_2_dec', 'dec_deg_2')
+FITS_FILE_COLS = ('FITS_FILE', 'fits_name')
+
+# Values
+DETECTION_VALS = ('Y', 'D')
 
 # -----------------------
 # Helpers
 # -----------------------
+def read_csv(
+    filepath: str,
+    raise_file_not_found: bool = False,
+) -> tuple[Sequence[str], list[dict]]:
+    """
+    Reads a CSV file where values may be separated by ',' or ';'.
+    Strips leading/trailing double quotes from each value.
+    """
+    headers: Sequence[str] = []
+    rows = []
 
-def _run(cmd, timeout: float = 20.0) -> Tuple[int, str, str]:
-    if isinstance(cmd, str):
-        cmd = shlex.split(cmd)
+    try: 
+        with open(filepath, newline='', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                # Normalize separators by replacing commas with semicolons
+                line = line.replace(',', ';')
+                # Split by semicolon and strip quotes/spaces
+                values = [v.strip().strip('"') for v in line.split(';')]
+
+                if i == 0:
+                    headers = values
+                else:
+                    rows.append({header: values[j] if j < len(values) else '' for j, header in enumerate(headers)})
+
+    except FileNotFoundError as e:
+        if raise_file_not_found:
+            raise e
+
+    return headers, rows
+
+
+def extract_row_value(row: dict, columns: Union[str, Sequence[str]]) -> Any:
+    """
+    Extracts the value of a column from a row dict given one or more column names.
+
+    Args:
+        row: dictionary representing a CSV row.
+        columns: a single column name or a list/tuple of column names.
+
+    Returns:
+        The value of the matching column.
+
+    Raises:
+        ValueError: if none of the columns are found or if multiple columns are found.
+    """
+    if isinstance(columns, str):
+        columns = [columns]  # normalize to list
+
+    # Find all matching columns present in the row
+    found_columns = [col for col in columns if col in row]
+    if len(found_columns) == 0:
+        raise ValueError(f"None of the columns {columns} found in row {row}.")
+    elif len(found_columns) > 1:
+        raise ValueError(f"Multiple columns {found_columns} found in row {row}.")
+    
+    return row[found_columns[0]]
+
+
+def extract_matching_rows(
+    filepath: str,
+    columns: Union[str, Sequence[str]],
+    value: str,
+) -> list[dict]:
+    headers, csv_rows = read_csv(filepath=filepath)
+
+    if len(csv_rows) == 0:
+        return []
+
+    # Check that at least a column is present
+    if not any(column in headers for column in columns):
+        raise ValueError(
+            f"None of the columns {columns} found in CSV headers {headers}."
+        )
+    
+    matching_rows: list[dict] = []
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, env=os.environ.copy(), timeout=timeout)
-        return out.returncode, out.stdout, out.stderr
-    except subprocess.TimeoutExpired as e:
-        return 124, e.stdout or "", e.stderr or "timeout"
+        for csv_row in csv_rows:
+            if any(csv_row.get(column) == value for column in columns if column in headers):
+                matching_rows.append(csv_row)
+
+    except FileNotFoundError:
+        return []
+    
+    return matching_rows
+
+
+def append_row(filepath: str, row: dict[str, Any]) -> None:
+    """
+    Appends a row to a CSV file. If the file does not exist, it is created
+    with headers taken from row.keys().
+
+    The provided dict may have keys in any order; they are reordered to match
+    the file's header order when appending.
+    """
+
+    file_exists = os.path.exists(filepath)
+
+    if not file_exists:
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            writer.writeheader()
+            writer.writerow(row)
+        return
+
+    # File exists: match existing header order
+    with open(filepath, newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        header = next(reader)  # first row is header
+
+    # Ensure provided dict doesn’t contain unknown fields
+    unknown = set(row.keys()) - set(header)
+    if unknown:
+        raise ValueError(f"Row contains unknown fields: {unknown}")
+
+    # Build ordered row matching header
+    ordered_row = {col: row.get(col, "") for col in header}
+
+    with open(filepath, "a", newline='', encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writerow(ordered_row)
+
+
+def find_next_action(
+    input_filepath: str,
+    screening_filepath: str,
+    photometry_filepath: str,
+    skip_screening: bool = False,
+    skip_photometry: bool = False,
+) -> tuple[str, Any]:
+    if not os.path.exists(input_filepath):
+        raise FileNotFoundError(f"CSV file not found: {input_filepath}")
+
+    _, input_rows = read_csv(
+        filepath=input_filepath,
+        raise_file_not_found=True,
+    )
+
+    for input_row in input_rows:
+        observation_id: str = extract_row_value(
+            row=input_row,
+            columns=OBS_ID_COLS,
+        )
+    
+        matching_screening_rows: list[dict] = extract_matching_rows(
+            filepath=screening_filepath,
+            columns=OBS_ID_COLS,
+            value=observation_id
+        )
+
+        # If there are no screening rows, it needs to be screened
+        if len(matching_screening_rows) == 0 and not skip_screening:
+            print(f"No screenings found for Observation {observation_id}, starting screening...")
+            return ("Screening", input_row)
+        
+        detection_rows: list[dict] = []
+        for screening_row in matching_screening_rows:
+            if extract_row_value(
+                row=screening_row,
+                columns=DECISION_COLS,
+            ) in DETECTION_VALS:
+                detection_rows.append(screening_row)
+
+        # If there are no detections, we forget about photometry
+        if not detection_rows:
+            continue
+
+        # Check if if photometry took place
+        for screening_row in detection_rows:
+            fits_file: str = extract_row_value(
+                row=screening_row,
+                columns=FITS_FILE_COLS,
+            )
+
+            matching_photometry_rows: list[dict] = extract_matching_rows(
+                filepath=photometry_filepath,
+                columns=FITS_FILE_COLS,
+                value=fits_file,
+            )
+
+            # If there was no photometry:
+            if not matching_photometry_rows and not skip_photometry:
+                print(f"No photometry found for FITS {fits_file}, starting photometry...")
+                return ("Photometry", screening_row)
+            
+            if len(matching_photometry_rows) > 1:
+                raise RuntimeError(f"More than one photometry row for {fits_file}")
+    
+    print("No further actions : )")
+
 
 def first_present(row: Dict[str, str], names: Iterable[str]) -> Optional[str]:
     for n in names:
         if n in row and str(row[n]).strip():
             return row[n].strip()
     return None
-
-# def read_input_csv(path: Path):
-#     with path.open('r', newline='') as f:
-#         sample = f.read(4096)
-#         f.seek(0)
-#         try:
-#             dialect = csv.Sniffer().sniff(sample, delimiters=";,")
-#             delimiter = dialect.delimiter
-#         except csv.Error:
-#             delimiter = ';' if ';' in sample and ',' not in sample else ','
-#         reader = csv.DictReader(f, delimiter=delimiter, quotechar='"')
-#         for row in reader:
-#             yield row
 
 def read_input_csv(path: Path) -> tuple[list[dict], list[str]]:
     """
@@ -125,41 +295,6 @@ def _find_ini_key(cfg: configparser.ConfigParser, key: str, sections: Iterable[s
             return cfg[sec][key].strip()
     return None
 
-# def read_ini_settings(ini_path: Path):
-#     cfg = configparser.ConfigParser()
-#     cfg.read(ini_path)
-
-#     input_csv = _find_ini_key(cfg, 'CSV_FILEPATH', sections=('INPUT',))
-#     if not input_csv:
-#         raise KeyError('INPUT.CSV_FILEPATH not found in INI.')
-
-#     download_dir = _find_ini_key(cfg, 'DOWNLOAD_DIRECTORY', sections=('DOWNLOAD','XSA_CRAWLER'))
-#     if not download_dir:
-#         raise KeyError('DOWNLOAD_DIRECTORY not found in INI (in [DOWNLOAD] or [XSA_CRAWLER]).')
-
-#     regex_pat = _find_ini_key(cfg, 'REGEX', sections=('DOWNLOAD','XSA_CRAWLER'))
-
-#     ds9_bin = _find_ini_key(cfg, 'DS9_BINARY_FILEPATH', sections=('DS9',)) or 'ds9'
-#     zoom     = _find_ini_key(cfg, 'ZOOM', sections=('DS9',)) or 'to fit'
-#     zscale_s = (_find_ini_key(cfg, 'ZSCALE', sections=('DS9',)) or 'TRUE').strip().upper()
-#     zscale   = (zscale_s == 'TRUE')
-
-#     screening_csv = _find_ini_key(cfg, 'CSV_FILEPATH', sections=('SCREENING_RESULTS',))
-#     if not screening_csv:
-#         raise KeyError('SCREENING_RESULTS.CSV_FILEPATH not found in INI.')
-#     screening_headers_s = (_find_ini_key(cfg, 'INCLUDE_HEADERS', sections=('SCREENING_RESULTS',)) or 'TRUE').strip().upper()
-#     screening_include_headers = (screening_headers_s == 'TRUE')
-
-#     return {
-#         'input_csv': Path(input_csv).expanduser().resolve(),
-#         'download_dir': Path(download_dir).expanduser().resolve(),
-#         'regex': regex_pat,
-#         'ds9_bin': ds9_bin,
-#         'zoom': zoom,
-#         'zscale': zscale,
-#         'screening_csv': Path(screening_csv).expanduser().resolve(),
-#         'screening_include_headers': screening_include_headers,
-#     }
 
 def read_ini_settings(ini_path: Path):
     cfg = configparser.ConfigParser()
@@ -247,77 +382,6 @@ def _regions_text(ra1: float, dec1: float, ra2: float, dec2: float) -> str:
         f'circle({ra1},{dec1},10") # text={{pos1}}\n'
         f'circle({ra2},{dec2},10") # text={{pos2}}\n'
     )
-
-# def launch_ds9_with_regions(ds9_bin: str,
-#                             fits_path: Path,
-#                             zoom: str,
-#                             zscale: bool,
-#                             ra1: float, dec1: float, ra2: float, dec2: float) -> tuple[tempfile.NamedTemporaryFile, subprocess.Popen]:
-#     """
-#     Launch DS9 with a temp regions file preloaded. Return (tempfile_handle, proc).
-#     Caller is responsible for closing/removing the tempfile.
-#     """
-#     reg_text = _regions_text(ra1, dec1, ra2, dec2)
-#     tf = tempfile.NamedTemporaryFile('w', suffix='.reg', delete=False)
-#     tf.write(reg_text)
-#     tf.flush()  # ensure content is written
-
-#     env = os.environ.copy()
-#     env.setdefault('DISPLAY', ':0')
-
-#     cmd = [ds9_bin, str(fits_path), '-scale', 'zscale' if zscale else 'linear']
-#     cmd += _zoom_args(zoom)
-#     cmd += ['-regions', 'load', tf.name]
-
-#     proc = subprocess.Popen(cmd, env=env)
-#     # tiny delay helps DS9 render before user looks
-#     time.sleep(0.4)
-#     return tf, proc
-
-
-# def launch_ds9_with_regions(
-#     ds9_bin: str,
-#     fits_paths: Path | Sequence[Path],
-#     zoom: str,
-#     zscale: bool,
-#     ra1: float,
-#     dec1: float,
-#     ra2: float,
-#     dec2: float,
-# ) -> tuple[tempfile.NamedTemporaryFile, subprocess.Popen]:
-#     """
-#     Launch DS9 with one or many FITS images and a temp regions file preloaded.
-#     Return (tempfile_handle, proc). Caller must close/remove tempfile.
-#     """
-#     # Normalise to a list of Paths
-#     if isinstance(fits_paths, (str, os.PathLike, Path)):
-#         fits_list = [Path(fits_paths)]
-#     else:
-#         fits_list = [Path(p) for p in fits_paths]
-
-#     if not fits_list:
-#         raise ValueError("launch_ds9_with_regions called with empty fits_paths.")
-
-#     reg_text = _regions_text(ra1, dec1, ra2, dec2)
-#     tf = tempfile.NamedTemporaryFile('w', suffix='.reg', delete=False)
-#     tf.write(reg_text)
-#     tf.flush()
-
-#     env = os.environ.copy()
-#     env.setdefault('DISPLAY', ':0')
-
-#     cmd = [ds9_bin]
-#     cmd += [str(p) for p in fits_list]
-#     if zscale:
-#         cmd += ['-scale', 'zscale']
-#     else:
-#         cmd += ['-scale', 'linear']
-#     cmd += _zoom_args(zoom)
-#     cmd += ['-regions', 'load', tf.name]
-
-#     proc = subprocess.Popen(cmd, env=env)
-#     time.sleep(0.4)  # small delay so DS9 shows up
-#     return tf, proc
 
 
 def launch_ds9_with_regions(
@@ -993,4 +1057,12 @@ def main():
     print('\n[INFO] Screening completed.')
 
 if __name__ == '__main__':
-    main()
+    # main()
+    folder: str = "/Users/pau/git/phc1990/tfm-viu/asdf/"
+    print(
+        find_next_action(
+            input_filepath=folder+"input.csv",
+            screening_filepath=folder+"screening.csv",
+            photometry_filepath=folder+"photometry.csv",
+        )
+    )
