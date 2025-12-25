@@ -178,8 +178,32 @@ def append_row(filepath: str, row: dict[str, Any]) -> None:
         writer.writerow(ordered_row)
 
 
+def find_fits_files(folder: str, observation_id: str, filter: str) -> List[Path]:
+    """
+    Returns all files under folder/observation_id/filter as Path objects.
+
+    Args:
+        folder: base folder path
+        observation_id: subfolder name for the observation
+        filter: subfolder name for the filter
+
+    Returns:
+        List of Path objects for all files under the specified folder.
+    """
+    base_path = Path(folder) / observation_id / filter
+    
+    if not base_path.exists() or not base_path.is_dir():
+        return []  # Return empty list if path does not exist
+
+    # List only files (ignore subdirectories)
+    files = [f for f in base_path.iterdir() if f.is_file()]
+
+    return files
+
+
 def find_next_action(
     input_filepath: str,
+    download_directory: str,
     screening_filepath: str,
     photometry_filepath: str,
     skip_screening: bool = False,
@@ -199,6 +223,17 @@ def find_next_action(
             columns=OBS_ID_COLS,
         )
     
+        if not find_fits_files(
+            folder=download_directory,
+            observation_id=observation_id,
+            filter=extract_row_value(
+                row=input_row,
+                columns=FILTER_COLS,
+            )
+        ):           
+            print(f"No FITS files found for Observation {observation_id}, starting download...")
+            return ("Download", input_row)
+
         matching_screening_rows: list[dict] = extract_matching_rows(
             filepath=screening_filepath,
             columns=OBS_ID_COLS,
@@ -483,31 +518,6 @@ def _list_fits_like(obs_dir: Path) -> List[Path]:
         files.extend(obs_dir.rglob(ext))
     return files
 
-def find_fits_with_regex(download_root: Path,
-                         observation_id: str,
-                         filt: str,
-                         target_name: str,
-                         regex_tmpl: str) -> Optional[Path]:
-    obs_dir = download_root / str(observation_id)
-    if not obs_dir.exists():
-        cands = [c for c in download_root.glob(f'*{observation_id}*') if c.is_dir()]
-        if not cands:
-            return None
-        obs_dir = cands[0]
-    files = _list_fits_like(obs_dir)
-    if not files:
-        return None
-    pattern = _compile_regex_from_ini(regex_tmpl, observation_id, filt, target_name)
-    matches = [p for p in files if pattern.search(p.as_posix())]
-    if not matches:
-        return None
-    def sort_key(p: Path):
-        ext = p.suffix.lower()
-        score = 0 if ext in ('.fits', '.fit') else 1
-        return (score, len(p.as_posix()))
-    matches.sort(key=sort_key)
-    return matches[0]
-
 def looks_like_filter_in_name(name: str, filt: str) -> bool:
     n = name.upper()
     f = filt.upper()
@@ -518,28 +528,6 @@ def looks_like_filter_in_name(name: str, filt: str) -> bool:
         f'_{f}.FITS', f'_{f}.FTZ', f'-{f}.FITS', f'-{f}.FTZ'
     ]
     return any(p in n for p in pats)
-
-def find_fits_fallback(download_root: Path,
-                       observation_id: str,
-                       filt: str) -> Optional[Path]:
-    obs_dir = download_root / str(observation_id)
-    if not obs_dir.exists():
-        cands = [c for c in download_root.glob(f'*{observation_id}*') if c.is_dir()]
-        if not cands:
-            return None
-        obs_dir = cands[0]
-    files = _list_fits_like(obs_dir)
-    if not files:
-        return None
-    matches = [p for p in files if observation_id in p.as_posix() and (looks_like_filter_in_name(p.name, filt) or filt.upper() in p.name.upper())]
-    if not matches:
-        return files[0] if len(files) == 1 else None
-    def sort_key(p: Path):
-        ext = p.suffix.lower()
-        score = 0 if ext in ('.fits', '.fit') else 1
-        return (score, len(p.as_posix()))
-    matches.sort(key=sort_key)
-    return matches[0]
 
 def find_all_fits_with_regex(
     download_root: Path,
@@ -1061,8 +1049,11 @@ if __name__ == '__main__':
     folder: str = "/Users/pau/git/phc1990/tfm-viu/asdf/"
     print(
         find_next_action(
+            download_directory="/Users/pau/git/phc1990/tfm-viu/temp",
             input_filepath=folder+"input.csv",
             screening_filepath=folder+"screening.csv",
             photometry_filepath=folder+"photometry.csv",
+            skip_photometry=True,
+            skip_screening=True,
         )
     )
