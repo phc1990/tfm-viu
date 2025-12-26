@@ -1,1 +1,0 @@
-target_name,observation_id,filter,fits_name,mag_ab,mag_err,count_rate,count_rate_err,net_counts,net_counts_error,aper_counts,bkg_per_pix,bkg_rms_per_pix,A_ap_eff,A_bg_eff,zp_ab,trail_height_pix,trail_semi_out_pix,trail_semi_in_pix
