@@ -10,7 +10,6 @@ import requests
 import tarfile
 import subprocess
 import src.screening.utils as utils
-import src.screening.observation as observation
 
 
 def convert_filter_name_to_xsa_name(filter: str) -> str:
@@ -34,11 +33,16 @@ class Crawler:
     """XMM-Newton Science Archive (XSA) crawler interface.
     """
     
-    def crawl(self, observation: observation.Observation) -> Dict[str, List[str]]:
+    def crawl(
+        self,
+        observation_id: str,
+        filters: list[str],
+    ) -> Dict[str, List[str]]:
         """Obtains the images of the specified observation and filters.
 
         Args:
-            observation (observation.Observation): observation to be obtained
+            observation_id (str): the ID of the observation to be obtained
+            filters (list[str]): the filters of interest
 
         Returns:
             Dict[str, List[str]]: a key-value structure containing filter as keys and the list of corresponding
@@ -49,23 +53,23 @@ class Crawler:
 
 class HttpCrawler(Crawler):
     """XMM-Newton Science Archive (XSA) crawler via HTTP GET request. 
-    Downloaded files will be placed following a {download_dir/filter/file} pattern.
+    Downloaded files will be placed following a {download_directory/filter/file} pattern.
     
     http://nxsa.esac.esa.int/nxsa-web/#aio
     """
     
-    def __init__(self, download_dir, base_url: str, regex_patern: str):
+    def __init__(self, download_directory, base_url: str, regex_pattern: str):
         """Constructor.
 
         Args:
-            download_dir (_type_): directory where files will be downloaded
+            download_directory (_type_): directory where files will be downloaded
             base_url (str): XMM-Newton Science Archive (XSA) base URL
-            regex_patern (str): regular expression used to matched against downloaded files
+            regex_pattern (str): regular expression used to matched against downloaded files
         """
         super().__init__()
-        self.download_dir = download_dir
+        self.download_directory = download_directory
         self.base_url = base_url
-        self.regex_pattern = regex_patern
+        self.regex_pattern = regex_pattern
     
     def _build_query_params(self, observation_id: str, filter: str) -> Dict[str, str]:
         """Build the query parameters.
@@ -97,18 +101,22 @@ class HttpCrawler(Crawler):
         """
         pass
         
-    def crawl(self, observation: observation.Observation) -> Dict[str, List[str]]:
+    def crawl(
+        self,    
+        observation_id: str,
+        filters: list[str],
+    ) -> Dict[str, List[str]]:
         """See base class."""
         results = {}
-        observation_dir = utils.build_path(part1=self.download_dir,
-                                           part2=observation.id)
+        observation_dir = utils.build_path(part1=self.download_directory,
+                                           part2=observation_id)
         
-        for filter in observation.filters:
+        for filter in filters:
             extracted_list = []
             
             with tempfile.NamedTemporaryFile(mode='w+b') as temp_file:
                 self._download_single_filter_as_tar(file=temp_file,
-                                                    observation_id=observation.id,
+                                                    observation_id=observation_id,
                                                     filter=filter)
                                 
                 # Point back at the begining of the file before reading it
@@ -137,9 +145,9 @@ class HttpPythonRequestsCrawler(HttpCrawler):
     https://docs.python-requests.org/en/latest/
     """
     
-    def __init__(self, download_dir, base_url: str, regex_patern: str):
+    def __init__(self, download_directory, base_url: str, regex_pattern: str):
         """See base class."""
-        super().__init__(download_dir, base_url, regex_patern)
+        super().__init__(download_directory, base_url, regex_pattern)
     
     def _download_single_filter_as_tar(self, file: FileIO, observation_id: str, filter: str):
         """See base class."""      
@@ -154,9 +162,9 @@ class HttpCurlCrawler(HttpCrawler):
     https://curl.se/docs/manpage.html
     """
     
-    def __init__(self, download_dir, base_url: str, regex_patern: str):
+    def __init__(self, download_directory, base_url: str, regex_pattern: str):
         """See base class."""
-        super().__init__(download_dir, base_url, regex_patern)
+        super().__init__(download_directory, base_url, regex_pattern)
         
     def _build_query_string(self, observation_id: str, filter: str) -> str:
         params = []
