@@ -18,23 +18,18 @@ Main differences vs photometry.py:
 """
 
 from __future__ import annotations
-
-import argparse
 from pathlib import Path
-from typing import Optional, Dict, Any
-
+from typing import Optional, Any
 import numpy as np
 from configparser import ConfigParser
 
-# Project imports — same style as in photometry.py
 from src.photometry.hdu import HDUW
 from src.photometry.ui import UI, TrailSelector
 from src.photometry.phot import PhotTable
 
-# XSA helpers for source list / OBSMLI
+from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, FITS_FILE_COLS, POS1_DEC_COLS, POS1_RA_COLS, POS2_DEC_COLS, POS2_RA_COLS
+from common import extract_row_value, append_row
 from download import ensure_om_srclist_or_obsmlist
-
-from configparser import ConfigParser  # add this near the imports at the top
 
 # Try to reuse helpers from photometry.py (download root, WCS, PNG, CSV, etc.)
 try:
@@ -54,25 +49,7 @@ except Exception:
     HAVE_PHOTOMETRY_HELPERS = False
     # --- Fallback local implementations (used only if import above fails) ---
 
-def _append_csv_row(csv_path, cols, row, include_headers=True):
-        """
-        Fallback CSV appender, used ONLY if photometry.py is not importable.
-        Writes to the given csv_path like photometry._append_csv_row.
-        """
-        import csv
-        from pathlib import Path
 
-        p = Path(csv_path).expanduser()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not p.exists() or p.stat().st_size == 0
-
-        row_out = {k: ("" if row.get(k) is None else row.get(k)) for k in cols}
-
-        with p.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=cols)
-            if write_header and include_headers:
-                writer.writeheader()
-            writer.writerow(row_out)
 
 def resolve_photometry_csv_from_ini(ini_path):
     """Return (csv_path, include_headers) from [PHOTOMETRY_RESULTS] in screening.ini."""
@@ -100,29 +77,6 @@ def resolve_photometry_csv_from_ini(ini_path):
 
     return Path("expo_photometry.csv"), True
 
-def ensure_photometry_csv_headers(csv_path, cols, include_headers=True):
-    """Create CSV early so Ctrl+C does not lose results."""
-    csv_path = Path(csv_path).expanduser()
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # cols = [
-    #     "target_name","fits_file","observation_id",
-    #     "mag_ab","mag_err","count_rate","count_rate_err",
-    #     "mode","filter","zp","zp_keyword","zp_source",
-    # ]
-
-    if not include_headers:
-        if not csv_path.exists():
-            csv_path.touch()
-        return
-
-    if csv_path.exists() and csv_path.stat().st_size > 0:
-        return
-
-    import csv
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=cols)
-        w.writeheader()
 
 # -----------------------------------------------------------------------------
 def zp_from_ini_for_filter(ini_path: Optional[str], filt: str):
@@ -167,24 +121,6 @@ def zp_from_ini_for_filter(ini_path: Optional[str], filt: str):
         return None, None
 
 
-def parse_args():
-    p = argparse.ArgumentParser(
-        description="Trail photometry on a single exposure (EXPTIME-based)."
-    )
-    p.add_argument("--fits", type=str, required=True,
-                   help="Exposure FITS file selected in screening.py")
-    p.add_argument("--target-name", type=str, required=True)
-    p.add_argument("--observation-id", type=str, required=True)
-    p.add_argument("--pos1-ra", type=float, required=True)
-    p.add_argument("--pos1-dec", type=float, required=True)
-    p.add_argument("--pos2-ra", type=float, required=True)
-    p.add_argument("--pos2-dec", type=float, required=True)
-    p.add_argument("--filter", type=str, required=True)
-    p.add_argument("--ini", type=str, required=False,
-                   help="Optional screening.ini path (for DOWNLOAD_DIRECTORY, etc.)")
-    return p.parse_args()
-
-
 def _build_csv_row(
     target_name: str,
     obs_id: str,
@@ -194,7 +130,7 @@ def _build_csv_row(
     result,
     selector: TrailSelector,
     pt: PhotTable,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Build a CSV row with both photometric and geometric information.
 
@@ -240,7 +176,7 @@ def _build_csv_row(
     # -------------------------------------------
     # Normal case: result contains valid photometry
     # -------------------------------------------
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "target_name": target_name,
         "observation_id": obs_id,
         "filter": filt,
@@ -280,39 +216,23 @@ def _build_csv_row(
 
     return row
 
-def _main_impl():
 
-    args = parse_args()
-
-    fits_path = Path(args.fits)
+def action_photometry(
+    config: ConfigParser,
+    screening_row: dict[str, Any]
+) -> None:
+    
+    fits_path = Path(extract_row_value(screening_row, FITS_FILE_COLS))
     if not fits_path.exists():
         raise FileNotFoundError(f"Exposure FITS not found: {fits_path}")
 
-    target = getattr(args, "target_name", None) or "unknown"
-    obs_id = str(getattr(args, "observation_id", "") or "")
-    filt = (getattr(args, "filter", "") or "").upper()
-
-    ini_arg = getattr(args, "ini", None)
-    ini_path = Path(ini_arg).expanduser() if ini_arg else None
-
-    # --- Resolve CSV path from [PHOTOMETRY_RESULTS] in screening.ini ---
-    csv_path, include_headers = resolve_photometry_csv_from_ini(ini_arg)
-    if csv_path is None:
-        csv_path = Path.home() / "Documents" / "expo_photometry_results.csv"
-        print(f"[EXPO_PHOT] Using fallback CSV: {csv_path}")
-
-    # 🔹 NEW: create the CSV file (and headers) immediately, before doing anything else
-    cols = [
-    "target_name", "observation_id", "filter", "fits_name",
-    "mag_ab", "mag_err",
-    "count_rate", "count_rate_err",
-    "net_counts", "net_counts_error",
-    "aper_counts", "bkg_per_pix","bkg_rms_per_pix", "A_ap_eff","A_bg_eff",
-    "zp_ab",
-    "trail_height_pix","trail_semi_out_pix","trail_semi_in_pix"
-    ]
-
-    ensure_photometry_csv_headers(csv_path, cols, include_headers=include_headers)
+    observation_id: str = extract_row_value(screening_row, OBS_ID_COLS)
+    target: str = extract_row_value(screening_row, TARGET_COLS)
+    filter = extract_row_value(screening_row, FILTER_COLS).upper()
+    ra1: float = float(extract_row_value(screening_row, POS1_RA_COLS))
+    dec1: float = float(extract_row_value(screening_row, POS1_DEC_COLS))
+    ra2: float = float(extract_row_value(screening_row, POS2_RA_COLS))
+    dec2: float = float(extract_row_value(screening_row, POS2_DEC_COLS))
 
     # Where to store/download ancillary products (OBSMLI, etc.)
     dest_root = _resolve_download_root_from_ini(ini_arg)
@@ -326,13 +246,12 @@ def _main_impl():
     srckind = None
     if zp_ini is None:
         srclist_path, srckind = ensure_om_srclist_or_obsmlist(
-            str(obs_id),
+            str(observation_id),
             force=False,
             dest_root=dest_dir,
         )
 
     # No mosaic sky image here: always operate on the exposure
-    used_mosaic = False
     chosen_fits = fits_path
     fits_name = chosen_fits.name
     mode = "EXPOSURE"
@@ -366,7 +285,7 @@ def _main_impl():
     elif srclist_path is not None:
         pt.calibrate_against_source_list(
             source_list_file=str(srclist_path),
-            filter=filt,
+            filter=filter,
             source_list_kind=str(srckind),
         )
     else:
@@ -388,8 +307,13 @@ def _main_impl():
 
     # --- UI: show exposure, select trail, perform photometry ---
     ui = UI(hduw)
-    ui.ax.set_title(f"{target} | obs={obs_id} | {fits_name}")
-    ui.add_markers_from_args(args)  # or your equivalent call for pos1/pos2
+    ui.ax.set_title(f"{target} | obs={observation_id} | {fits_name}")
+    ui.add_markers_from_args(
+        ra1=ra1,
+        dec1=dec1,
+        ra2=ra2,
+        dec2=dec2,
+    )  # or your equivalent call for pos1/pos2
 
     selector = TrailSelector(height=5.0, semi_out=5.0, finalize_on_click=False)
     
@@ -404,17 +328,21 @@ def _main_impl():
 
     if ap_box is None:
         print(f"[PHOT] User escapes selection. Dubious detection-no photometry result after all")
-        row = _build_csv_row(
+        row: dict[str, Any] = _build_csv_row(
             target_name=target,
-            obs_id=obs_id,
-            filt=filt,
+            obs_id=observation_id,
+            filt=filter,
             fits_name=fits_name,
             mode=mode,
             result=None,
             selector=None,
             pt=pt,
         )
-        _append_csv_row(csv_path, cols, row, include_headers=include_headers)
+
+        append_row(
+            filepath=config['PHOTOMETRY']['FILEPATH'],
+            row=row,
+        )
         return
 
     # --- Save PNG screenshot (if PNG_FILEPATH configured) ---
@@ -430,10 +358,10 @@ def _main_impl():
     try:
         res: PhotometryResult = pt.perform_trail_photometry(ap_box, ann_box, debug=True)
         # # --- Build CSV row and append it ---
-        row = _build_csv_row(
+        row: dict[str, Any] = _build_csv_row(
             target_name=target,
-            obs_id=obs_id,
-            filt=filt,
+            obs_id=observation_id,
+            filt=filter,
             fits_name=fits_name,
             mode=mode,
             result=res,
@@ -441,21 +369,12 @@ def _main_impl():
             pt=pt,
         )
 
-        _append_csv_row(csv_path, cols, row, include_headers=include_headers)
+        append_row(
+            filepath=config['PHOTOMETRY']['FILEPATH'],
+            row=row,
+        )
         
     except Exception as e:
         print(f"[PHOT] WARN: photometry failed: {e}")
         return
 
-
-def main():
-    try:
-        _main_impl()
-    except KeyboardInterrupt:
-        # User cancelled during the UI / selection stage
-        print("\n[EXPO_PHOT] Aborted by user. No new photometry row written.")
-        # Any existing CSV rows from previous runs are already on disk.
-        return
-
-if __name__ == "__main__":
-    main()

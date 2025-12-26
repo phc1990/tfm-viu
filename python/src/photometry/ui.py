@@ -461,7 +461,13 @@ class UI:
         self.update()
 
 
-    def add_markers_from_args(self, args, wcs=None):
+    def add_markers(
+        self,
+        ra1: float,
+        dec1: float,
+        ra2: float,
+        dec2: float,    
+    ):
         """
         Compatibility helper for expo_photometry.py.
 
@@ -472,8 +478,8 @@ class UI:
         y los pasa a add_sources(), usando WCS si está disponible.
         """
         try:
-            pos1 = (float(args.pos1_ra), float(args.pos1_dec))
-            pos2 = (float(args.pos2_ra), float(args.pos2_dec))
+            pos1 = (ra1, dec1)
+            pos2 = (ra2, dec2)
         except AttributeError:
             # Si no tiene esos atributos, no hacemos nada (no rompemos el flujo)
             print("[UI] WARN: args does not have pos1_ra/pos1_dec/pos2_ra/pos2_dec")
