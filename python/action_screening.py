@@ -104,7 +104,7 @@ def action_screening(
     ra2: float = float(extract_row_value(input_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(input_row, POS2_DEC_COLS))
 
-    fits_paths = find_fits_files(
+    fits_paths: list[Path] = find_fits_files(
         folder=config['INPUT']['DOWNLOAD_DIRECTORY'],
         observation_id=observation_id,
         filter=filter,
@@ -171,7 +171,7 @@ def action_screening(
                         filepath=config['SCREENING']['FILEPATH'],
                         row={
                             **input_row,
-                            FITS_FILE_COLS[0]: fits_paths[i-1],
+                            FITS_FILE_COLS[0]: fits_paths[i-1].name,
                             DECISION_COLS[0]: decision,
                         }
                     )

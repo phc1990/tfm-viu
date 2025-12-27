@@ -3,7 +3,7 @@ import csv
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional, Union, Sequence, List
+from typing import Any, Optional, Union, Sequence
 
 
 # Columns
@@ -148,7 +148,7 @@ def find_fits_files(
     folder: str,
     observation_id: str,
     filter: str,
-) -> List[Path]:
+) -> list[Path]:
     """
     Returns all files under folder/observation_id/filter as Path objects.
 
@@ -158,14 +158,14 @@ def find_fits_files(
         filter: subfolder name for the filter
 
     Returns:
-        List of Path objects for all files under the specified folder.
+        list of Path objects for all files under the specified folder.
     """
     base_path = Path(folder) / observation_id / filter
     
     if not base_path.exists() or not base_path.is_dir():
         return []  # Return empty list if path does not exist
 
-    # List only files (ignore subdirectories)
+    # list only files (ignore subdirectories)
     files = [f for f in base_path.iterdir() if f.is_file()]
 
     return files
