@@ -19,29 +19,22 @@ Main differences vs photometry.py:
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 import numpy as np
 from configparser import ConfigParser
 
 from src.photometry.hdu import HDUW
 from src.photometry.ui import UI, TrailSelector
 from src.photometry.phot import PhotTable
+from src.photometry.phot import PhotometryResult
 
 from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, FITS_FILE_COLS, POS1_DEC_COLS, POS1_RA_COLS, POS2_DEC_COLS, POS2_RA_COLS
 from common import extract_row_value, append_row
-from download import ensure_om_srclist_or_obsmlist
 
 # Try to reuse helpers from photometry.py (download root, WCS, PNG, CSV, etc.)
 try:
     from photometry import (
-        extract_wcs_from_hduw,
-        _resolve_download_root_from_ini,
-        _dest_dir_for,
-        _png_path_for,
-        _plot_pos1_pos2,
-        _append_csv_row,                  # from photometry.py
         _normalize_selection_to_ap_ann,
-        resolve_photometry_csv_from_ini,  # NEW: reuse INI → CSV resolver
     )
     HAVE_PHOTOMETRY_HELPERS = True
 
@@ -79,7 +72,7 @@ def resolve_photometry_csv_from_ini(ini_path):
 
 
 # -----------------------------------------------------------------------------
-def zp_from_ini_for_filter(ini_path: Optional[str], filt: str):
+def zp_from_ini_for_filter(config: ConfigParser, filter: str) -> float:
     """
     If screening.ini defines [PHOTOMETRY_RESULTS] ABM0<BAND> for this filter,
     return (zp, keyword). Otherwise (None, None).
@@ -87,49 +80,23 @@ def zp_from_ini_for_filter(ini_path: Optional[str], filt: str):
     Example:
       filter L  → band UVW1 → key ABM0UVW1
     """
-    if not ini_path:
-        return None, None
-
-    ini = Path(ini_path).expanduser()
-    if not ini.exists():
-        return None, None
-
-    cfg = ConfigParser()
-    cfg.read(ini)
-
-    if not cfg.has_section("PHOTOMETRY_RESULTS"):
-        return None, None
-
     # Use the same mapping as PhotTable: L→UVW1, M→UVM2, S→UVW2, etc.
-    band = PhotTable._filter_to_band(filt)
+    band = PhotTable._filter_to_band(filter)
     if not band:
         return None, None
 
     key = f"ABM0{band}"
-    if not cfg.has_option("PHOTOMETRY_RESULTS", key):
-        return None, None
-
-    raw = cfg.get("PHOTOMETRY_RESULTS", key)
-    try:
-        zp = float(raw)
-        return zp, key
-    except Exception:
-        print(
-            f"[EXPO_PHOT] WARN: Could not parse float ZP from "
-            f"[PHOTOMETRY_RESULTS] {key}={raw!r}; falling back to OBSMLI."
-        )
-        return None, None
-
+    raw = config["PHOTOMETRY"][key]
+    return float(raw)
+        
 
 def _build_csv_row(
     target_name: str,
     obs_id: str,
     filt: str,
     fits_name: str,
-    mode: str,
     result,
     selector: TrailSelector,
-    pt: PhotTable,
 ) -> dict[str, Any]:
     """
     Build a CSV row with both photometric and geometric information.
@@ -147,7 +114,6 @@ def _build_csv_row(
             "target_name": target_name,
             "observation_id": obs_id,
             "filter": filt,
-            "mode": mode,
             "fits_name": fits_name,
 
             # Photometry fields → None
@@ -163,9 +129,6 @@ def _build_csv_row(
             "A_ap_eff": None,
             "A_bg_eff": None,
             "zp_ab": None,
-            "zp_keyword": None,
-            "zp_source_file": None,
-            "zp_source_kind": None,
 
             # Geometry from selector
             "trail_height_pix": getattr(selector, "height", None),
@@ -180,7 +143,6 @@ def _build_csv_row(
         "target_name": target_name,
         "observation_id": obs_id,
         "filter": filt,
-        "mode": mode,
         "fits_name": fits_name,
 
         # Magnitudes
@@ -204,9 +166,6 @@ def _build_csv_row(
 
         # Zero point provenance
         "zp_ab": result.zp_ab,
-        "zp_keyword": result.zp_keyword,
-        "zp_source_file": result.zp_source_file,
-        "zp_source_kind": result.zp_source_kind,
 
         # Geometry of trail aperture
         "trail_height_pix": getattr(selector, "height", None),
@@ -215,6 +174,42 @@ def _build_csv_row(
     }
 
     return row
+
+
+def _build_screenshot_path(
+    config: ConfigParser,
+    fits_path: Path,
+    target: str,
+) -> Path:
+    """
+    Build PNG output path for a given FITS + target.
+
+    - If screening.ini provides [PHOTOMETRY_RESULTS] PNG_FILEPATH,
+      use that directory.
+    - Otherwise fall back to fits_path.parent (previous behaviour).
+    - If the target PNG already exists, append __1, __2, ... before
+      the .png extension until a free filename is found.
+    """
+    # 1) Decide base directory
+    base_dir = config['SCREENING']['SCREENSHOOTS_DIRECTORY']
+
+    # 2) Base name without numeric suffix
+    target_safe_name: str = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (target or ""))
+    base_name = f"{fits_path.stem}__{target_safe_name}"
+
+    # 3) First candidate: no numeric suffix
+    candidate = base_dir / f"{base_name}.png"
+
+    # 4) If file exists, append __x where x = 1, 2, ...
+    if candidate.exists():
+        i = 1
+        while True:
+            candidate = base_dir / f"{base_name}__{i}.png"
+            if not candidate.exists():
+                break
+            i += 1
+
+    return candidate
 
 
 def action_photometry(
@@ -234,31 +229,31 @@ def action_photometry(
     ra2: float = float(extract_row_value(screening_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(screening_row, POS2_DEC_COLS))
 
-    # Where to store/download ancillary products (OBSMLI, etc.)
-    dest_root = _resolve_download_root_from_ini(ini_arg)
-    dest_dir = _dest_dir_for(obs_id, filt, dest_root)
-
     # (rest of your ZP / OBSMLI / HDUW / UI / trail selection logic goes here)
     # ZP from INI if available (previous step you added)
-    zp_ini, zp_keyword = zp_from_ini_for_filter(ini_arg, filt)
+    zp_ini: float = zp_from_ini_for_filter(
+        config=config,
+        filter=filter,
+    )
 
-    srclist_path = None
-    srckind = None
-    if zp_ini is None:
-        srclist_path, srckind = ensure_om_srclist_or_obsmlist(
-            str(observation_id),
-            force=False,
-            dest_root=dest_dir,
-        )
+    # Where to store/download ancillary products (OBSMLI, etc.)
+    # dest_root = _resolve_download_root_from_ini(ini_arg)
+    # dest_dir = _dest_dir_for(obs_id, filt, dest_root)
+    # srclist_path = None
+    # srckind = None
+    # if zp_ini is None:
+    #     srclist_path, srckind = ensure_om_srclist_or_obsmlist(
+    #         str(observation_id),
+    #         force=False,
+    #         dest_root=dest_dir,
+    #     )
 
     # No mosaic sky image here: always operate on the exposure
-    chosen_fits = fits_path
-    fits_name = chosen_fits.name
-    mode = "EXPOSURE"
+    fits_name = fits_path.name
     
     # --- Build HDUW / PhotTable, set zero point ---
-    hduw = HDUW(chosen_fits)
-    hduw = HDUW(file=str(chosen_fits))
+    hduw = HDUW(fits_path)
+    hduw = HDUW(file=str(fits_path))
     arr = np.asarray(
         getattr(hduw, "data", getattr(hduw.hdu, "data", None)),
         dtype=float
@@ -267,33 +262,8 @@ def action_photometry(
         raise ValueError("UI: expected a 2-D image in the HDU.")
 
     arr = np.ma.masked_invalid(arr)  # what you’re displaying
-
     pt = PhotTable(hduw)
-
-    if zp_ini is not None:
-        pt.zero_point = zp_ini
-        if hasattr(pt, "_zp_prov") and isinstance(getattr(pt, "_zp_prov"), dict):
-            pt._zp_prov.update(
-                keyword=zp_keyword,
-                file=str(ini_path) if ini_path is not None else None,
-                kind="INI",
-            )
-        ini_name = ini_path.name if ini_path is not None else "INI"
-        print(
-            f"[EXPO_PHOT] ZP={pt.zero_point:.6f} from {ini_name} key={zp_keyword} [INI]"
-        )
-    elif srclist_path is not None:
-        pt.calibrate_against_source_list(
-            source_list_file=str(srclist_path),
-            filter=filter,
-            source_list_kind=str(srckind),
-        )
-    else:
-        print(
-            "[EXPO_PHOT] WARN: No ZP from INI and no SRCLIST file; "
-            "zero_point remains unset."
-        )
-
+    pt.zero_point = zp_ini
     # --- Force COUNTS mode for exposure images, as you already do ---
     orig_unit_fn = pt._data_unit_kind_and_bunit
 
@@ -308,7 +278,7 @@ def action_photometry(
     # --- UI: show exposure, select trail, perform photometry ---
     ui = UI(hduw)
     ui.ax.set_title(f"{target} | obs={observation_id} | {fits_name}")
-    ui.add_markers_from_args(
+    ui.add_markers(
         ra1=ra1,
         dec1=dec1,
         ra2=ra2,
@@ -333,10 +303,8 @@ def action_photometry(
             obs_id=observation_id,
             filt=filter,
             fits_name=fits_name,
-            mode=mode,
             result=None,
             selector=None,
-            pt=pt,
         )
 
         append_row(
@@ -347,7 +315,11 @@ def action_photometry(
 
     # --- Save PNG screenshot (if PNG_FILEPATH configured) ---
     try:
-        png_path = _png_path_for(chosen_fits, target, ini_path)
+        png_path = _build_screenshot_path(
+            config=config,
+            fits_path=fits_path,
+            target=target,
+        )
         if png_path is not None:
             ui.fig.savefig(png_path, dpi=150, bbox_inches="tight")
             print(f"[PHOT] PNG exported: {png_path}")
@@ -363,10 +335,8 @@ def action_photometry(
             obs_id=observation_id,
             filt=filter,
             fits_name=fits_name,
-            mode=mode,
             result=res,
             selector=selector,
-            pt=pt,
         )
 
         append_row(
