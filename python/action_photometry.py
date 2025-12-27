@@ -216,11 +216,6 @@ def action_photometry(
     config: ConfigParser,
     screening_row: dict[str, Any]
 ) -> None:
-    
-    fits_path = Path(extract_row_value(screening_row, FITS_FILE_COLS))
-    if not fits_path.exists():
-        raise FileNotFoundError(f"Exposure FITS not found: {fits_path}")
-
     observation_id: str = extract_row_value(screening_row, OBS_ID_COLS)
     target: str = extract_row_value(screening_row, TARGET_COLS)
     filter = extract_row_value(screening_row, FILTER_COLS).upper()
@@ -228,6 +223,11 @@ def action_photometry(
     dec1: float = float(extract_row_value(screening_row, POS1_DEC_COLS))
     ra2: float = float(extract_row_value(screening_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(screening_row, POS2_DEC_COLS))
+    fits_name: str = extract_row_value(screening_row, FITS_FILE_COLS)
+    fits_path = Path(config['INPUT']['DOWNLOAD_DIRECTORY']) / observation_id / filter / fits_name
+    if not fits_path.exists():
+        raise FileNotFoundError(f"Exposure FITS not found: {fits_path}")
+
 
     # (rest of your ZP / OBSMLI / HDUW / UI / trail selection logic goes here)
     # ZP from INI if available (previous step you added)
@@ -249,8 +249,6 @@ def action_photometry(
     #     )
 
     # No mosaic sky image here: always operate on the exposure
-    fits_name = fits_path.name
-    
     # --- Build HDUW / PhotTable, set zero point ---
     hduw = HDUW(fits_path)
     hduw = HDUW(file=str(fits_path))
