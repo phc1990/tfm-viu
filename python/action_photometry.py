@@ -175,39 +175,32 @@ def _build_csv_row(
 
     return row
 
-
 def _build_screenshot_path(
     config: ConfigParser,
     fits_path: Path,
     target: str,
 ) -> Path:
-    """
-    Build PNG output path for a given FITS + target.
+    # 1) Decide base directory (ConfigParser returns str → convert to Path)
+    base_dir = Path(config["PHOTOMETRY"]["SCREENSHOOTS_DIRECTORY"]).expanduser()
 
-    - If screening.ini provides [PHOTOMETRY_RESULTS] PNG_FILEPATH,
-      use that directory.
-    - Otherwise fall back to fits_path.parent (previous behaviour).
-    - If the target PNG already exists, append __1, __2, ... before
-      the .png extension until a free filename is found.
-    """
-    # 1) Decide base directory
-    base_dir = config['SCREENING']['SCREENSHOOTS_DIRECTORY']
+    # Create directory if needed (prevents later save failures)
+    base_dir.mkdir(parents=True, exist_ok=True)
 
     # 2) Base name without numeric suffix
-    target_safe_name: str = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (target or ""))
+    target_safe_name = "".join(
+        ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (target or "")
+    ) or "target"
+
     base_name = f"{fits_path.stem}__{target_safe_name}"
 
-    # 3) First candidate: no numeric suffix
+    # 3) First candidate
     candidate = base_dir / f"{base_name}.png"
 
-    # 4) If file exists, append __x where x = 1, 2, ...
-    if candidate.exists():
-        i = 1
-        while True:
-            candidate = base_dir / f"{base_name}__{i}.png"
-            if not candidate.exists():
-                break
-            i += 1
+    # 4) If file exists, append __1, __2, ...
+    i = 1
+    while candidate.exists():
+        candidate = base_dir / f"{base_name}__{i}.png"
+        i += 1
 
     return candidate
 
@@ -281,6 +274,7 @@ def action_photometry(
         dec1=dec1,
         ra2=ra2,
         dec2=dec2,
+        wcs=None
     )  # or your equivalent call for pos1/pos2
 
     selector = TrailSelector(height=5.0, semi_out=5.0, finalize_on_click=False)
