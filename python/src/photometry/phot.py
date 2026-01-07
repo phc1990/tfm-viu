@@ -451,9 +451,11 @@ class PhotTable:
             print(f"  A_bg_eff              = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
             print(f"  EXPTIME               = {exptime:.3f} (s)")
             print(f"  Net counts Cnet       = {Cnet:.3f} (counts)")
+            print(f"  Cnet_err              = {Cnet_err:.6f} (counts)")
             print(f"  Count rate c          = {c:.6f} (counts/s)")
             print(f"  ZP used               = {self.zero_point:.6f} ({self._zp_prov})")
             print(f"  m_AB                  = {m_ab:.6f} mag")
+
 
         return PhotometryResult(
             mag_ab=m_ab,
