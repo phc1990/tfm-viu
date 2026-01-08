@@ -23,14 +23,19 @@ try:
 except Exception:
     WCS = None
 
-
 class TrailSelector:
-    def __init__(self, height: float = 5.0, semi_out: float = 5.0, finalize_on_click: bool = False) -> None:
+    def __init__(self, height: float = 5.0, semi_out: float = 5.0,
+                 finalize_on_click: bool = False) -> None:
         # User-adjustable geometry
         self.height = float(height)
         self.semi_out = float(semi_out)
 
-        # Behavior flag (default False -> Enter is required to finalize)
+        # Background placement
+        self.annulus_centre_override = None  # optional (x,y)
+        self.bg_box_centre = None             # (x,y) for external background
+        self.use_external_bg = False
+
+        # Behavior flag
         self.finalize_on_click = bool(finalize_on_click)
 
         # Internal state
@@ -43,12 +48,10 @@ class TrailSelector:
         self.centre = None
         self.width = None
         self.theta = None
-        self.rectangular_aperture: Optional[RectangularAperture] = None
-        self.rectangular_annulus: Optional[RectangularAnnulus] = None
+        self.rectangular_aperture = None
+        self.rectangular_annulus = None
 
-        # Preview patches
-        self._ap_patch = None
-        self._an_patch = None
+    # ------------------------------------------------------------------
 
     def _compute_from_points(self, p1, p2):
         (x1, y1), (x2, y2) = p1, p2
@@ -57,25 +60,40 @@ class TrailSelector:
         if width == 0:
             return
 
-        centre = [0.5 * (x1 + x2), 0.5 * (y1 + y2)]
-        theta = np.arctan2(dy, dx)
-
-        self.centre = centre
+        self.centre = [0.5 * (x1 + x2), 0.5 * (y1 + y2)]
         self.width = width
-        self.theta = theta
+        self.theta = np.arctan2(dy, dx)
+
+        # Decide annulus centre
+        if self.use_external_bg and self.bg_box_centre is not None:
+            ann_centre = self.bg_box_centre
+        elif self.annulus_centre_override is not None:
+            ann_centre = self.annulus_centre_override
+        else:
+            ann_centre = self.centre
 
         self.rectangular_aperture = RectangularAperture(
-            positions=self.centre, w=self.width, h=self.height, theta=self.theta
-        )
-        self.rectangular_annulus = RectangularAnnulus(
             positions=self.centre,
-            w_in=self.width, w_out=self.width + 2 * self.semi_out,
-            h_in=self.height, h_out=self.height + 2 * self.semi_out,
+            w=self.width,
+            h=self.height,
             theta=self.theta
         )
 
+        self.rectangular_annulus = RectangularAnnulus(
+            positions=ann_centre,
+            w_in=self.width,
+            w_out=self.width + 2 * self.semi_out,
+            h_in=self.height,
+            h_out=self.height + 2 * self.semi_out,
+            theta=self.theta
+        )
+
+    # ------------------------------------------------------------------
+
     def is_done(self) -> bool:
         return bool(self.done)
+
+    # ------------------------------------------------------------------
 
     def adjust_height(self, delta: float):
         self.height = max(1.0, self.height + float(delta))
@@ -87,39 +105,79 @@ class TrailSelector:
         if self._start is not None and self._end is not None:
             self._compute_from_points(self._start, self._end)
 
-    # --- inside TrailSelector class ---
+    # ------------------------------------------------------------------
+    # Background control
+    # ------------------------------------------------------------------
 
-    @property
+    def set_annulus_centre(self, x: float, y: float) -> None:
+        """Recenter annulus without creating an external background box."""
+        self.annulus_centre_override = (float(x), float(y))
+        self.use_external_bg = False
+        self.bg_box_centre = None
+        if self._start is not None and self._end is not None:
+            self._compute_from_points(self._start, self._end)
+
+    def start_background_box(self, x: float, y: float) -> None:
+        """Place an external background box centred at (x, y)."""
+        self.bg_box_centre = (float(x), float(y))
+        self.use_external_bg = True
+        self.annulus_centre_override = None
+        if self._start is not None and self._end is not None:
+            self._compute_from_points(self._start, self._end)
+
+    def reset_annulus_centre(self) -> None:
+        """Reset background region to follow the trail aperture centre."""
+        self.annulus_centre_override = None
+        self.bg_box_centre = None
+        self.use_external_bg = False
+        if self._start is not None and self._end is not None:
+            self._compute_from_points(self._start, self._end)
+
+    # ------------------------------------------------------------------
+    # Compatibility helpers
+    # ------------------------------------------------------------------
+
     def aperture(self):
-        """Compatibility alias for photometry.py: returns rectangular_aperture."""
+        """Compatibility alias for photometry.py."""
         return self.rectangular_aperture
 
     @property
     def annulus(self):
-        """Compatibility alias for photometry.py: returns rectangular_annulus."""
+        """Compatibility alias for photometry.py."""
         return self.rectangular_annulus
 
     def as_dict(self):
-        """Return selection with canonical keys used by the pipeline."""
         return {
             "aperture": self.rectangular_aperture,
             "annulus": self.rectangular_annulus,
         }
-    
+
+    # ------------------------------------------------------------------
+
     def finalize(self):
-        # compute geometry if both points exist and not yet computed
         if self._start is not None and self._end is not None:
             self._compute_from_points(self._start, self._end)
         self.done = True
 
-
     def set_wcs(self, wcs):
         self.wcs = wcs
 
-
 class UI:
     def __init__(self, hduw: HDUW) -> None:
-        plt.ion()
+        # Preview patches (managed by UI)
+        self._ap_patch = None
+        self._an_patch = None
+
+        self._hint_text = ""
+        # UI state
+        self._pan_press = None
+        self._selector = None
+        self._hint = None
+        self._outside_mode = False   # NEW: outside-background mode
+        
+        # Allow second left click to freeze the plot and free the cursor
+        self._selection_frozen = False
+
         self.hduw = hduw
         self.fig = plt.figure()
         self.ax = plt.subplot(projection=hduw.wcs)
@@ -146,6 +204,7 @@ class UI:
 
         self._pan_press = None
         self._selector: Optional[TrailSelector] = None
+        self._awaiting_annulus_click = False  # if True, next left-click sets annulus centre (key 'O')
         self._hint = None
 
         # Events
@@ -193,6 +252,26 @@ class UI:
     #     if "color" in style and "edgecolor" not in style and "ec" not in style:
     #         base_style["edgecolor"] = style.pop("color")
     #     base_style.update(style or {})
+
+    #     # Estilos específicos para pos1/pos2
+    #     pos1_style = dict(
+    #         marker="o",
+    #         s=90,                 
+    #         facecolors="none",
+    #         edgecolors="tab:green",
+    #         linewidths=1.6,       
+    #         alpha=0.98,
+    #         zorder=12,
+    #     )
+    #     pos2_style = dict(
+    #         marker="o",
+    #         s=90,
+    #         facecolors="none",
+    #         edgecolors="tab:red",
+    #         linewidths=1.6,
+    #         alpha=0.98,
+    #         zorder=12,
+    #     )
 
     #     xs, ys = [], []
 
@@ -255,30 +334,72 @@ class UI:
     #                     _add_point(pt)
     #     except Exception as e:
     #         print(f"[UI] WARN: no pude interpretar 'sources': {e}")
-
+        
     #     # ---- 2) pos1 / pos2 ----
-    #     _add_point(pos1)
-    #     _add_point(pos2)
+    #         _add_point(pos1)
+    #         _add_point(pos2)
 
-    #     arts = []
-    #     if len(xs) > 0:
-    #         scat = ax.scatter(xs, ys, **base_style)
-    #         arts.append(scat)
-    #         try:
-    #             # Si hay método update, úsalo; si no, dibuja
-    #             self.update()
-    #         except Exception:
-    #             ax.figure.canvas.draw_idle()
-    #     else:
+    #         arts = []
+
+    #         # Convertir puntos por separado para poder aplicar estilos distintos
+    #         p1 = None
+    #         p2 = None
+
+    #     if pos1 is not None:
+    #         p1 = _add_point(pos1)
+    #         x1, y1 = pos1
+    #         scat1 = ax.scatter([x1], [y1], **pos1_style)
+    #         arts.append(scat1)
+    #     if pos2 is not None:
+    #         p2 = _add_point(pos2)
+    #         x2, y2 = p2
+    #         scat2 = ax.scatter([x2], [y2], **pos2_style)
+    #         arts.append(scat2)
+
+    #     # Si no hay puntos válidos, informar
+    #     if len(arts) == 0:
     #         print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
+    #         return
 
-    #     # Guarda artistas (opcional) para poder limpiarlos luego si quieres
-    #     if not hasattr(self, "_source_artists"):
-    #         self._source_artists = []
-    #     self._source_artists.extend(arts)
+    #     # Guardar artistas para poder eliminarlos luego (evita stacking)
+    #     if not hasattr(self, "_marker_artists"):
+    #         self._marker_artists = []
 
-    #     return arts
-    
+    #     # Eliminar marcadores previos
+    #     for a in self._marker_artists:
+    #         try:
+    #             a.remove()
+    #         except Exception:
+    #             pass
+    #     self._marker_artists = arts
+
+    #     # Redibujar
+    #     try:
+    #         self.update()
+    #     except Exception:
+    #         ax.figure.canvas.draw_idle()
+
+        
+
+
+    #     # arts = []
+    #     # if len(xs) > 0:
+    #     #     scat = ax.scatter(xs, ys, **base_style)
+    #     #     arts.append(scat)
+    #     #     try:
+    #     #         # Si hay método update, úsalo; si no, dibuja
+    #     #         self.update()
+    #     #     except Exception:
+    #     #         ax.figure.canvas.draw_idle()
+    #     # else:
+    #     #     print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
+
+    #     # # Guarda artistas (opcional) para poder limpiarlos luego si quieres
+    #     # if not hasattr(self, "_source_artists"):
+    #     #     self._source_artists = []
+    #     # self._source_artists.extend(arts)
+
+    #     # return arts
 
     def add_sources(
         self,
@@ -288,6 +409,10 @@ class UI:
         wcs=None,
         **style,
     ):
+        """
+        Pinta marcadores de fuentes sobre self.ax.
+        Devuelve lista de artistas creados.
+        """
         ax = getattr(self, "ax", None)
         if ax is None:
             print("[UI] WARN: no hay self.ax; no se pueden dibujar fuentes.")
@@ -295,28 +420,29 @@ class UI:
 
         W = wcs or getattr(self, "wcs", None)
 
-        # Estilo por defecto (sources)
-        src_style = dict(
+        # Estilo visible por defecto
+        base_style = dict(
             marker="o",
-            s=30,                 # tamaño (área) del círculo
+            s=30,
             facecolors="none",
             edgecolors="blue",
             linewidths=0.8,
             alpha=0.95,
             zorder=10,
         )
-        # Permite que el usuario ajuste el estilo de sources con kwargs
-        if "color" in style and "edgecolor" not in style and "ec" not in style:
-            src_style["edgecolors"] = style.pop("color")
-        src_style.update(style or {})
+
+        # Si el usuario pasa 'color', úsalo como edgecolors si no se indicó
+        if "color" in style and "edgecolors" not in style and "ec" not in style:
+            base_style["edgecolors"] = style.pop("color")
+        base_style.update(style or {})
 
         # Estilos específicos para pos1/pos2
         pos1_style = dict(
             marker="o",
-            s=90,                 # más grande
+            s=90,
             facecolors="none",
             edgecolors="tab:green",
-            linewidths=1.6,       # línea más gruesa
+            linewidths=1.6,
             alpha=0.98,
             zorder=12,
         )
@@ -330,33 +456,48 @@ class UI:
             zorder=12,
         )
 
-        def _convert_point(pt):
-            """Convierte (ra,dec) o (x,y) a píxeles. Devuelve (x,y) o None."""
+        xs, ys = [], []
+
+        def _push_xy(x, y):
+            try:
+                if np.isfinite(x) and np.isfinite(y):
+                    xs.append(float(x))
+                    ys.append(float(y))
+            except Exception:
+                pass
+
+        def _world_to_pixel(ra, dec):
+            if W is None:
+                return None
+            try:
+                sc = SkyCoord(float(ra) * u.deg, float(dec) * u.deg, frame="icrs")
+                x, y = W.world_to_pixel(sc)
+                return float(np.atleast_1d(x)[0]), float(np.atleast_1d(y)[0])
+            except Exception as e:
+                print(f"[UI] WARN: fallo RA/Dec→pix: {e}")
+                return None
+
+        def _pt_to_xy(pt):
+            """Devuelve (x,y) en píxel o None."""
             if pt is None or not isinstance(pt, (tuple, list)) or len(pt) != 2:
                 return None
             a, b = pt
 
             # Heurística: si parece RA/Dec y hay WCS, convierto
+            if (
+                W is not None
+                and isinstance(a, (int, float))
+                and isinstance(b, (int, float))
+                and (-360.0 <= a <= 360.0)
+                and (-90.0 <= b <= 90.0)
+            ):
+                return _world_to_pixel(a, b)
+
+            # Si no, asumo píxel
             try:
-                if (
-                    W is not None
-                    and isinstance(a, (int, float)) and isinstance(b, (int, float))
-                    and (-360.0 <= a <= 360.0) and (-90.0 <= b <= 90.0)
-                ):
-                    sc = SkyCoord(a * u.deg, b * u.deg, frame="icrs")
-                    x, y = W.world_to_pixel(sc)
-                else:
-                    x, y = a, b
-
-                if np.isfinite(x) and np.isfinite(y):
-                    return float(x), float(y)
-            except Exception as e:
-                print(f"[UI] WARN: fallo al convertir punto {pt}: {e}")
-            return None
-
-        src_pts = []   # lista de (x,y) para sources
-        pos1_pt = None
-        pos2_pt = None
+                return float(a), float(b)
+            except Exception:
+                return None
 
         # ---- 1) sources ----
         try:
@@ -366,78 +507,106 @@ class UI:
                         xarr = np.atleast_1d(sources["xcentroid"])
                         yarr = np.atleast_1d(sources["ycentroid"])
                         for X, Y in zip(xarr, yarr):
-                            if np.isfinite(X) and np.isfinite(Y):
-                                src_pts.append((float(X), float(Y)))
+                            _push_xy(X, Y)
                     elif "ra" in sources and "dec" in sources:
-                        if W is None:
-                            print("[UI] WARN: RA/Dec sin WCS; omito esas fuentes.")
-                        else:
-                            sc = SkyCoord(np.atleast_1d(sources["ra"]) * u.deg,
-                                        np.atleast_1d(sources["dec"]) * u.deg, frame="icrs")
-                            X, Y = W.world_to_pixel(sc)
-                            for Xk, Yk in zip(np.atleast_1d(X), np.atleast_1d(Y)):
-                                if np.isfinite(Xk) and np.isfinite(Yk):
-                                    src_pts.append((float(Xk), float(Yk)))
+                        ra_arr = np.atleast_1d(sources["ra"])
+                        dec_arr = np.atleast_1d(sources["dec"])
+                        for ra, dec in zip(ra_arr, dec_arr):
+                            xy = _pt_to_xy((ra, dec))
+                            if xy is not None:
+                                _push_xy(*xy)
                     else:
-                        # Si dentro del dict vienen pos1/pos2, respétalos como pos1/pos2
+                        # ¿pos1/pos2 dentro del dict?
                         if "pos1" in sources:
-                            pos1_pt = _convert_point(sources["pos1"])
+                            xy = _pt_to_xy(sources["pos1"])
+                            if xy is not None:
+                                _push_xy(*xy)
                         if "pos2" in sources:
-                            pos2_pt = _convert_point(sources["pos2"])
+                            xy = _pt_to_xy(sources["pos2"])
+                            if xy is not None:
+                                _push_xy(*xy)
 
-                        # Otros valores: intentar interpretarlos como lista de puntos
+                        # O algún iterable de puntos dentro de values()
                         for v in sources.values():
                             try:
                                 for pt in v:
-                                    xy = _convert_point(pt)
+                                    xy = _pt_to_xy(pt)
                                     if xy is not None:
-                                        src_pts.append(xy)
+                                        _push_xy(*xy)
                             except Exception:
                                 continue
                 else:
+                    # Iterable de puntos
                     for pt in sources:
-                        xy = _convert_point(pt)
+                        xy = _pt_to_xy(pt)
                         if xy is not None:
-                            src_pts.append(xy)
+                            _push_xy(*xy)
         except Exception as e:
             print(f"[UI] WARN: no pude interpretar 'sources': {e}")
 
-        # ---- 2) pos1 / pos2 explícitos ----
-        # (si ya vinieron en sources como dict, estos pueden sobreescribir si se pasan explícitos)
-        if pos1 is not None:
-            pos1_pt = _convert_point(pos1)
-        if pos2 is not None:
-            pos2_pt = _convert_point(pos2)
-
+        # ---- 2) dibujado ----
         arts = []
 
-        # Pinta sources (azul)
-        if len(src_pts) > 0:
-            xs, ys = zip(*src_pts)
-            arts.append(ax.scatter(xs, ys, **src_style))
+        # Limpia marcadores previos (evita stacking)
+        if not hasattr(self, "_marker_artists"):
+            self._marker_artists = []
+        for a in self._marker_artists:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._marker_artists = []
 
-        # Pinta pos1 (verde) y pos2 (rojo)
-        if pos1_pt is not None:
-            x1, y1 = pos1_pt
+        # Dibuja sources (si hay)
+        if len(xs) > 0:
+            scat = ax.scatter(xs, ys, **base_style)
+            arts.append(scat)
+
+        # Dibuja pos1/pos2 con estilo propio (si hay)
+        xy1 = _pt_to_xy(pos1)
+        if xy1 is not None:
+            x1, y1 = xy1
             arts.append(ax.scatter([x1], [y1], **pos1_style))
-        if pos2_pt is not None:
-            x2, y2 = pos2_pt
+
+        xy2 = _pt_to_xy(pos2)
+        if xy2 is not None:
+            x2, y2 = xy2
             arts.append(ax.scatter([x2], [y2], **pos2_style))
 
-        if len(arts) > 0:
-            try:
-                self.update()
-            except Exception:
-                ax.figure.canvas.draw_idle()
-        else:
+        if len(arts) == 0:
             print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
+            return []
 
-        if not hasattr(self, "_source_artists"):
-            self._source_artists = []
-        self._source_artists.extend(arts)
+        self._marker_artists = arts
+
+        try:
+            self.update()
+        except Exception:
+            ax.figure.canvas.draw_idle()
 
         return arts
 
+    def add_markers(self, ra1, dec1, ra2, dec2, wcs=None, **style):
+        try:
+            pos1 = (float(ra1), float(dec1))
+            pos2 = (float(ra2), float(dec2))
+        except Exception:
+            print("[UI] WARN: add_markers recibió RA/Dec no numéricos; no pinto marcadores.")
+            return
+
+        W = wcs or getattr(self, "wcs", None)
+        if W is None:
+            # Ojo: si tu helper está dentro de la clase, usa self.extract_wcs_from_hduw(...)
+            try:
+                W = extract_wcs_from_hduw(self.hduw)
+            except Exception:
+                W = None
+
+        self.add_sources(pos1=pos1, pos2=pos2, wcs=W, **style)
+
+    # def add_markers(self, *args, **kwargs):
+    #     """Backward-compatible alias for add_sources (used by other pipeline modules)."""
+    #     return self.add_sources(*args, **kwargs)
 
     def select_trail(self, selector):
         self._selector = selector
@@ -466,28 +635,110 @@ class UI:
         self.fig.canvas.flush_events()
 
     # -------------------- helpers --------------------
-    def _draw_hint_text(self):
-        if self._hint is not None:
-            try: self._hint.remove()
-            except Exception: pass
-        self._hint = self.ax.text(
-            0.02, 0.98,
-            "Left click: start / set end (no finalize)\n"
-            "Wheel: zoom | Right-drag: pan\n"
-            "[/]: height  { / }: annulus  R: reset\n"
-            "Enter: accept & close   Esc: cancel",
-            transform=self.ax.transAxes, va='top', ha='left',
-            color='cyan', fontsize=8,
-            bbox=dict(facecolor='black', alpha=0.3, pad=3)
+    # def _draw_hint_text(self, text=None):
+    #     # Remove old hint if present
+    #     if self._hint is not None:
+    #         try:
+    #             self._hint.remove()
+    #         except Exception:
+    #             pass
+    #         self._hint = None
+
+    #     default = (
+    #         "Left click: start / set end (no finalize)\n"
+    #         "Wheel: zoom | Right-drag: pan\n"
+    #         "[/]: height  { / }: annulus  R: reset\n"
+    #         "Enter: accept & close   Esc: cancel"
+    #     )
+
+    #     msg = default if text is None else text
+
+    #     self._hint = self.ax.text(
+    #         0.02, 0.98, msg,
+    #         transform=self.ax.transAxes, va='top', ha='left',
+    #         color='cyan', fontsize=8,
+    #         bbox=dict(facecolor='black', alpha=0.3, pad=3),
+    #         zorder=50
+    #     )
+    #     self.update()
+
+    def _draw_hint_text(self, text=None):
+        # Remove old hint first
+        if getattr(self, "_hint", None) is not None:
+            try:
+                self._hint.remove()
+            except Exception:
+                pass
+            self._hint = None
+
+        default = (
+            "Left click: start / set end\n"
+            "Right-drag: pan | Wheel: zoom\n"
+            "[/]: height  { / }: annulus\n"
+            "O: outside background (right-click)\n"
+            "I: reset background   R: reset   Enter: accept   Esc: cancel"
         )
+        msg = default if text is None else text
+
+        self._hint = self.ax.text(
+            0.02, 0.98, msg,
+            transform=self.ax.transAxes,
+            va="top", ha="left",
+            fontsize=8,
+            bbox=dict(facecolor="black", alpha=0.3, pad=3),
+            zorder=1000,
+        )
+        self.update()
+
 
     def _clear_hint_text(self):
-        try:
-            if self._hint is not None:
+        if getattr(self, "_hint", None) is not None:
+            try:
                 self._hint.remove()
-        except Exception:
-            pass
+            except Exception:
+                pass
         self._hint = None
+        self.update()
+
+
+    # def _clear_hint_text(self):
+    #     if self._hint is not None:
+    #         try:
+    #             self._hint.remove()
+    #         except Exception:
+    #             pass
+    #     self._hint = None
+    #     self.update()
+
+    def _hard_reset_selector(self, sel):
+        """
+        Fully reset selector state so nothing from the previous selection can redraw.
+        """
+        # Clear selection endpoints and flags
+        sel._start = None
+        sel._end = None
+        sel.done = False
+
+        # Clear derived geometry
+        sel.centre = None
+        sel.width = None
+        sel.theta = None
+        sel.rectangular_aperture = None
+        sel.rectangular_annulus = None
+
+        # Clear any external background override
+        if hasattr(sel, "reset_annulus_centre"):
+            try:
+                sel.reset_annulus_centre()
+            except Exception:
+                pass
+
+        # Remove preview patches from axes
+        self._remove_preview()
+
+        # Ensure mouse move doesn't keep updating old state
+        self._selection_frozen = False
+
 
     def _ensure_on_axes(self, event) -> bool:
         return (event.inaxes == self.ax) and (event.xdata is not None) and (event.ydata is not None)
@@ -511,28 +762,68 @@ class UI:
         self.update()
 
     def _on_mouse_press(self, event):
-        # Right button: start pan
-        if event.button == 3 and self._ensure_on_axes(event):
-            self._pan_press = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
+        if not self._ensure_on_axes(event):
             return
-
-        # Left click: selection (does NOT finalize)
-        if self._selector is None or event.button != 1 or not self._ensure_on_axes(event):
+        if self._selector is None:
             return
 
         sel = self._selector
+
+        # 1) OUTSIDE MODE: right-click places background box (consume click; do NOT pan)
+        if self._outside_mode and event.button == 3:
+            self._outside_mode = False
+            self._clear_hint_text()
+            try:
+                sel.start_background_box(event.xdata, event.ydata)
+                self._draw_preview(sel)
+            except Exception as e:
+                print(f"[UI] WARN: failed to place outside background box: {e}")
+            return
+
+        # 2) Normal right button: start pan
+        if event.button == 3:
+            self._pan_press = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
+            return
+
+        # # 3) Left click: trail selection
+        # if event.button != 1:
+        #     return
+
+        # if sel._start is None:
+        #     sel._start = (event.xdata, event.ydata)
+        #     sel._end = (event.xdata, event.ydata)
+        #     sel._compute_from_points(sel._start, sel._end)
+        #     self._draw_preview(sel)
+        # else:
+        #     sel._end = (event.xdata, event.ydata)
+        #     sel._compute_from_points(sel._start, sel._end)
+        #     self._draw_preview(sel)
+        #     if sel.finalize_on_click:
+        #         sel.done = True
+
+
+        # 3) Left click: trail selection
+        if event.button != 1:
+            return
+
+        # If selection is frozen, a left-click starts a new selection (common UX)
+        if self._selection_frozen:
+            self._selection_frozen = False
+            sel._start = None
+            sel._end = None
+
         if sel._start is None:
+            # First click: start point
             sel._start = (event.xdata, event.ydata)
             sel._end = (event.xdata, event.ydata)
             sel._compute_from_points(sel._start, sel._end)
             self._draw_preview(sel)
         else:
-            # Update end point; keep preview; do NOT set sel.done here
+            # Second click: end point and FREEZE geometry (do not keep following mouse)
             sel._end = (event.xdata, event.ydata)
             sel._compute_from_points(sel._start, sel._end)
             self._draw_preview(sel)
-            if sel.finalize_on_click:
-                sel.done = True  # only if user explicitly enabled legacy behavior
+            self._selection_frozen = True
 
     def _on_mouse_release(self, event):
         if event.button == 3:
@@ -551,14 +842,24 @@ class UI:
             self.update()
             return
 
-        # Live preview while moving the mouse (if start is set and not finalized)
-        if self._selector is None or self._selector.done:
+        # Live preview while moving the mouse (if start is set and not frozen)
+        if self._selector is None:
             return
         sel = self._selector
-        if sel._start is not None and self._ensure_on_axes(event):
-            sel._end = (event.xdata, event.ydata)
-            sel._compute_from_points(sel._start, sel._end)
-            self._draw_preview(sel)
+        if sel.done:
+            return
+        if getattr(self, "_selection_frozen", False):
+            return
+        if sel._start is None or sel._end is None:
+             return
+
+        # if self._selector is None or self._selector.done:
+        #     return
+        # sel = self._selector
+        # if sel._start is not None and self._ensure_on_axes(event):
+        #     sel._end = (event.xdata, event.ydata)
+        #     sel._compute_from_points(sel._start, sel._end)
+        #     self._draw_preview(sel)
 
     def _on_key_press(self, event):
         if self._selector is None:
@@ -569,17 +870,101 @@ class UI:
             sel.canceled = True
             plt.close(self.fig)
             return
+
         if event.key == 'enter':
             # Finalize ONLY on Enter
             if sel._start is not None and sel._end is not None:
                 sel.done = True
                 plt.close(self.fig)
             return
-        if event.key in ('r', 'R'):
-            sel._start, sel._end, sel.done = None, None, False
+
+        # if event.key in ('r', 'R'):
+        #     # reset selection + any outside background override
+        #     self._outside_mode = False
+        #     self._clear_hint_text()
+        #     try:
+        #         sel.reset_annulus_centre()
+        #     except Exception:
+        #         pass
+
+        #     sel._start, sel._end, sel.done = None, None, False
+        #     self._remove_preview()
+        #     self.update()
+        #     return
+
+        # # Outside background mode toggle
+        # if event.key and event.key.lower() == "o":
+        #     # Require trail to be defined before allowing outside background placement
+        #     if sel._start is not None and sel._end is not None:
+        #         self._outside_mode = True
+        #         self._draw_hint_text("Outside background mode: RIGHT-click to define background box")
+        #     return
+
+        # # Reset background to follow trail
+        # if event.key in ('i', 'I'):
+        #     self._outside_mode = False
+        #     self._clear_hint_text()
+        #     try:
+        #         sel.reset_annulus_centre()
+        #         self._draw_preview(sel)
+        #     except Exception:
+        #         pass
+        #     return
+        # Toggle outside-background placement
+        if event.key and event.key.lower() == "o":
+            # Only meaningful once a trail exists
+            if sel._start is not None and sel._end is not None:
+                self._outside_mode = True
+                self._draw_hint_text("Outside background mode: RIGHT-click to define background box\n\n"
+                                    "Then use { } to resize annulus as usual\n"
+                                    "I: reset background to follow trail")
+            return
+
+        # Reset background to follow trail
+        if event.key in ('i', 'I'):
+            self._outside_mode = False
+            self._clear_hint_text()
+            try:
+                sel.reset_annulus_centre()
+                self._draw_preview(sel)
+            except Exception:
+                pass
+            return
+
+        if event.key in ("r", "R"):
+            self._outside_mode = False
+            self._selection_frozen = False
+
+            # Clear selector state
+            sel._start = None
+            sel._end = None
+            sel.done = False
+
+            # Clear derived geometry so preview can't redraw
+            sel.centre = None
+            sel.width = None
+            sel.theta = None
+            sel.rectangular_aperture = None
+            sel.rectangular_annulus = None
+
+            # Reset background placement
+            try:
+                sel.reset_annulus_centre()
+            except Exception:
+                pass
+
+            # Remove existing drawings
             self._remove_preview()
+
+            # Re-draw the default hint (single instance)
+            self._draw_hint_text()
+
             self.update()
             return
+
+
+
+        # Geometry adjustments
         if event.key == '[':
             sel.adjust_height(-1.0); self._draw_preview(sel)
         elif event.key == ']':
@@ -590,144 +975,66 @@ class UI:
             sel.adjust_annulus(+1.0); self._draw_preview(sel)
 
     # -------------------- preview drawing --------------------
+
     def _remove_preview(self):
-        for artist in (getattr(self._selector, "_ap_patch", None),
-                       getattr(self._selector, "_an_patch", None)):
-            try:
-                if artist is not None:
+        # UI-level
+        for attr in ("_ap_patch", "_an_patch"):
+            artist = getattr(self, attr, None)
+            if artist is not None:
+                try:
                     artist.remove()
-            except Exception:
-                pass
-        self._selector._ap_patch = None
-        self._selector._an_patch = None
+                except Exception:
+                    pass
+                setattr(self, attr, None)
 
-    def _draw_preview(self, sel: TrailSelector):
-        self._remove_preview()
-        if sel.rectangular_aperture is None or sel.rectangular_annulus is None:
-            self.update(); return
-
-        # Try private filled patch; fall back to outline if needed
-        try:
-            ap_patch = sel.rectangular_aperture._to_patch(fill=True, color='tab:blue', alpha=0.35, ec='k', lw=0.5)
-            an_patch = sel.rectangular_annulus._to_patch(fill=True, color='tab:red',  alpha=0.15, ec='none')
-            self.ax.add_patch(ap_patch)
-            self.ax.add_patch(an_patch)
-            sel._ap_patch = ap_patch
-            sel._an_patch = an_patch
-        except Exception:
-            sel.rectangular_aperture.plot(ax=self.ax, color='tab:blue', lw=1.0)
-            sel.rectangular_annulus.plot(ax=self.ax, color='tab:red',  lw=0.8)
-        self.update()
-
-
-
-    def extract_wcs_from_hduw(hduw):
-        """
-        Try several ways to get a usable celestial WCS from an HDU wrapper.
-        Returns a WCS or None.
-        """
-        # 1) If the wrapper already has a WCS, use it
-        w = getattr(hduw, "wcs", None)
-        if w is not None:
-            try:
-                # ensure it's a real celestial WCS
-                if hasattr(w, "has_celestial"):
-                    return w if w.has_celestial else None
-                return w
-            except Exception:
-                pass
-
-        # 2) Try the HDU object inside the wrapper
-        h = getattr(hduw, "hdu", None)
-        if h is not None and hasattr(h, "header"):
-            try:
-                w = WCS(h.header)
-                if not hasattr(w, "has_celestial") or w.has_celestial:
-                    return w
-            except Exception:
-                pass
-
-        # 3) Open the file and search for the first image HDU with a valid WCS
-        fpath = str(getattr(hduw, "file", "") or "")
-        if fpath:
-            try:
-                with fits.open(fpath, memmap=False) as hdul:
-                    # prefer the same index as hduw.hdu if it’s part of this file
-                    if h is not None and hasattr(h, "name"):
-                        try:
-                            for hh in hdul:
-                                if getattr(hh, "name", None) == h.name and hasattr(hh, "header"):
-                                    ww = WCS(hh.header)
-                                    if not hasattr(ww, "has_celestial") or ww.has_celestial:
-                                        return ww
-                        except Exception:
-                            pass
-
-                    # otherwise, scan all image extensions
-                    for hh in hdul:
-                        if not hasattr(hh, "data") or hh.data is None:
-                            continue
-                        try:
-                            ww = WCS(hh.header)
-                            if not hasattr(ww, "has_celestial") or ww.has_celestial:
-                                return ww
-                        except Exception:
-                            continue
-
-                    # last fallback: primary header
+        # Selector-level (in case older code stores them there)
+        sel = getattr(self, "_selector", None)
+        if sel is not None:
+            for attr in ("_ap_patch", "_an_patch"):
+                artist = getattr(sel, attr, None)
+                if artist is not None:
                     try:
-                        ww = WCS(hdul[0].header)
-                        if not hasattr(ww, "has_celestial") or ww.has_celestial:
-                            return ww
+                        artist.remove()
                     except Exception:
                         pass
-            except Exception:
-                pass
+                    setattr(sel, attr, None)
 
-        # 4) As a final fallback, try a header attribute on the wrapper
-        hdr = getattr(hduw, "header", None)
-        if hdr is not None:
-            try:
-                w = WCS(hdr)
-                if not hasattr(w, "has_celestial") or w.has_celestial:
-                    return w
-            except Exception:
-                pass
+    def _draw_preview(self, sel):
+        # Always remove previous preview before drawing a new one
+        self._remove_preview()
 
-        return None
-
-
-
-    def add_markers(
-        self,
-        ra1: float,
-        dec1: float,
-        ra2: float,
-        dec2: float,   
-        wcs: None, 
-        **style
-    ):
-        """
-        Compatibility helper for expo_photometry.py.
-
-        Lee pos1/pos2 de los argumentos de línea de comandos:
-        - args.pos1_ra, args.pos1_dec
-        - args.pos2_ra, args.pos2_dec
-
-        y los pasa a add_sources(), usando WCS si está disponible.
-        """
-        try:
-            pos1 = (ra1, dec1)
-            pos2 = (ra2, dec2)
-        except AttributeError:
-            # Si no tiene esos atributos, no hacemos nada (no rompemos el flujo)
-            print("[UI] WARN: args does not have pos1_ra/pos1_dec/pos2_ra/pos2_dec")
+        # If no geometry, nothing to draw
+        if sel is None or sel.rectangular_aperture is None or sel.rectangular_annulus is None:
+            self.update()
             return
 
-        # Usa WCS explícito si se pasa, si no el propio self.wcs
-        W = wcs or getattr(self, "wcs", None)
+        # Prefer filled patches via _to_patch (so we control alpha etc.)
+        try:
+            ap_patch = sel.rectangular_aperture._to_patch(
+                fill=True, facecolor='tab:blue', alpha=0.35, edgecolor='k', lw=0.7
+            )
+            an_patch = sel.rectangular_annulus._to_patch(
+                fill=True, facecolor='tab:red', alpha=0.15, edgecolor='none'
+            )
 
-        if W is None:
-            W = extract_wcs_from_hduw(self.hduw)
-        # add_sources ya sabe manejar (ra,dec) vs (x,y)
-        self.add_sources(pos1=pos1, pos2=pos2, wcs=W)
+            self.ax.add_patch(ap_patch)
+            self.ax.add_patch(an_patch)
+
+            # Store references so _remove_preview can remove them
+            self._ap_patch = ap_patch
+            self._an_patch = an_patch
+            sel._ap_patch = ap_patch
+            sel._an_patch = an_patch
+
+        except Exception:
+            # Fall back to photutils plot() but store references so we can remove later
+            ap_artists = sel.rectangular_aperture.plot(ax=self.ax, color='tab:blue', lw=1.0)
+            an_artists = sel.rectangular_annulus.plot(ax=self.ax, color='tab:red', lw=0.8)
+
+            # photutils typically returns a list; keep the first artist
+            self._ap_patch = ap_artists[0] if isinstance(ap_artists, (list, tuple)) and ap_artists else ap_artists
+            self._an_patch = an_artists[0] if isinstance(an_artists, (list, tuple)) and an_artists else an_artists
+            sel._ap_patch = self._ap_patch
+            sel._an_patch = self._an_patch
+
+        self.update()
