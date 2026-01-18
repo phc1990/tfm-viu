@@ -170,6 +170,88 @@ def find_fits_files(
 
     return files
 
+from pathlib import Path
+
+from pathlib import Path
+
+def find_fits_files_without_srclist(
+    folder: str,
+    observation_id: str,
+    filter: str,
+    debug: bool = False,
+) -> list[Path]:
+    base_path = Path(folder) / observation_id / filter
+
+    if debug:
+        print(f"[DEBUG] base_path = {base_path}")
+        print(f"[DEBUG] exists={base_path.exists()} is_dir={base_path.is_dir()}")
+
+    if not base_path.exists() or not base_path.is_dir():
+        if debug:
+            print("[DEBUG] base_path does not exist or is not a directory -> returning []")
+        return []
+
+    all_entries = list(base_path.iterdir())
+
+    if debug:
+        print(f"[DEBUG] iterdir() returned {len(all_entries)} entries:")
+        for p in all_entries:
+            kind = "FILE" if p.is_file() else "DIR"
+            print(f"  - {kind}: {p.name}")
+
+    kept: list[Path] = []
+    excluded: list[Path] = []
+
+    for p in all_entries:
+        if not p.is_file():
+            continue
+        if "swsrli" in p.name.lower():
+            excluded.append(p)
+        else:
+            kept.append(p)
+
+    if debug:
+        print(f"[DEBUG] kept {len(kept)} files:")
+        for p in kept:
+            print(f"  + {p.name}")
+        print(f"[DEBUG] excluded {len(excluded)} SRCLIST files:")
+        for p in excluded:
+            print(f"  - {p.name}")
+
+    return kept
+
+def find_srclist_in_same_dir(fits_path: Path) -> Path | None:
+    """Return the SRCLIST (SWSRLI*.FTZ) matching the given exposure FITS.
+
+    Deterministic matching rule:
+      - SRCLIST must be in the same directory as fits_path
+      - SRCLIST filename must start with the same exposure prefix:
+            P<obsid>OMS<expnum>
+        e.g. exposure: P0821871601OMS006FSIMAGL000.FTZ
+             srclist : P0821871601OMS006SWSRLIL000.FTZ
+      - SRCLIST must contain 'SWSRLI' and end with '.FTZ'
+    """
+    fits_path = Path(fits_path)
+    folder = fits_path.parent
+    if not folder.exists() or not folder.is_dir():
+        return None
+
+    name_u = fits_path.name.upper()
+
+    # Prefix = up to and including 'OMS' + 3 digits (e.g. P0821871601OMS006)
+    idx = name_u.find("OMS")
+    if idx < 0 or len(name_u) < idx + 6:
+        return None
+    exposure_prefix = name_u[: idx + 6]
+
+    for p in folder.iterdir():
+        if not p.is_file():
+            continue
+        pn = p.name.upper()
+        if pn.startswith(exposure_prefix) and "SWSRLI" in pn and pn.endswith(".FTZ"):
+            return p
+
+    return None
 
 def close_subprocess(proc: Optional[subprocess.Popen]):
     if proc is not None and proc.poll() is None:

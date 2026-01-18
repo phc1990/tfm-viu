@@ -40,6 +40,14 @@ class PhotometryResult:
     mag_ab: Optional[float] = None
     mag_err: Optional[float] = None
 
+    # Aperture-correction term in magnitudes (applied additively to mag_ab)
+    # apcorr_mag = -2.5*log10(f_apcorr); if f_apcorr>1 (flux increases), apcorr_mag is negative.
+    apcorr_mag: Optional[float] = None
+    apcorr_mag_err: Optional[float] = None
+    mag_ab_apcorr: Optional[float] = None
+    mag_ab_apcorr_err: Optional[float] = None
+
+
     # Rates and uncertainties
     count_rate: Optional[float] = None
     count_rate_err: Optional[float] = None
@@ -341,9 +349,9 @@ class PhotTable:
 
         # Units?
         unit_kind, bunit_str = self._data_unit_kind_and_bunit()
-        # If ambiguous AND ZP came from OBSMLI, default to counts modes
+        # If ambiguous AND ZP came from OBSMLI, default to rate-mode
         if unit_kind == "unknown" and (self._zp_prov.get("kind") or "").upper() == "OBSMLI":
-            unit_kind = "counts"
+            unit_kind = "rate"
 
         # Aperture sum (exact) and effective areas
         phot_ap = aperture_photometry(data, rectangular_aperture, method='exact')
@@ -356,71 +364,65 @@ class PhotTable:
 
         # -------- RATE images (counts/s/pix) --------
         if unit_kind == "rate":
-            raise ValueError(
-                "RATE images (counts/s/pix) are disabled. "
-                "Please use COUNTS images and EXPTIME to derive count rates."
+            # Total source rate in aperture:
+            # Cap is in counts/s (sum over pixels); background contribution is mean_rate*area
+            Cnet_rate = Cap - bkg_mean * A_ap_eff
+            if not np.isfinite(Cnet_rate) or Cnet_rate <= 0:
+                raise ValueError("Non-positive count rate (rate image); cannot compute magnitude.")
+
+            # Uncertainty in rate:
+            # Background variance in rate units:
+            var_bkg_rate = np.nan
+            if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+                var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+
+            # Effective exposure time from local background: t_eff ≈ mean/std^2 (if > 0)
+            t_eff = None
+            if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
+                t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
+
+            # Source Poisson variance in rate units:
+            var_src_rate = np.nan
+            if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
+                var_src_rate = Cap / t_eff
+
+            terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
+            count_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else np.nan
+
+            # Magnitude and uncertainty
+            c = Cnet_rate
+            m_ab = float(self.zero_point - 2.5 * math.log10(c))
+            m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
+
+            if debug:
+                print("[TrailPhotometry DEBUG — RATE image]")
+                print(f"  BUNIT                  = {bunit_str}")
+                print(f"  Aperture sum Cap      = {Cap:.3f} (counts/s)")
+                print(f"  bkg_mean              = {bkg_mean:.6f} (counts/s/pix)")
+                print(f"  bkg_rms               = {bkg_std:.6f} (counts/s/pix)")
+                print(f"  A_ap_eff              = {A_ap_eff:.3f} (pix)")
+                print(f"  A_bg_eff              = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+                print(f"  Net rate Cnet_rate    = {Cnet_rate:.6f} (counts/s)")
+                print(f"  ZP used               = {self.zero_point:.6f} ({self._zp_prov})")
+                print(f"  m_AB                  = {m_ab:.6f} mag")
+
+            return PhotometryResult(
+                mag_ab=m_ab,
+                mag_err=m_err if np.isfinite(m_err) else None,
+                count_rate=c,
+                count_rate_err=count_rate_err if np.isfinite(count_rate_err) else None,
+                net_counts=None,
+                net_counts_err=None,
+                aper_counts=None,  # Cap is RATE sum; keep None to avoid confusion
+                bkg_per_pix=bkg_mean,
+                bkg_rms_per_pix=bkg_std,
+                A_ap_eff=A_ap_eff,
+                A_bg_eff=A_bg_eff,
+                zp_ab=self.zero_point,
+                zp_keyword=self._zp_prov["keyword"],
+                zp_source_file=self._zp_prov["file"],
+                zp_source_kind=self._zp_prov["kind"],
             )
-        # # -------- RATE images (counts/s/pix) --------
-        # if unit_kind == "rate":
-        #     # Total source rate in aperture:
-        #     # Cap is in counts/s (sum over pixels); background contribution is mean_rate*area
-        #     Cnet_rate = Cap - bkg_mean * A_ap_eff
-        #     if not np.isfinite(Cnet_rate) or Cnet_rate <= 0:
-        #         raise ValueError("Non-positive count rate (rate image); cannot compute magnitude.")
-
-        #     # Uncertainty in rate:
-        #     # Background variance in rate units:
-        #     var_bkg_rate = np.nan
-        #     if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-        #         var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
-
-        #     # Effective exposure time from local background: t_eff ≈ mean/std^2 (if > 0)
-        #     t_eff = None
-        #     if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
-        #         t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
-
-        #     # Source Poisson variance in rate units:
-        #     var_src_rate = np.nan
-        #     if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
-        #         var_src_rate = Cap / t_eff
-
-        #     terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
-        #     count_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else np.nan
-
-        #     # Magnitude and uncertainty
-        #     c = Cnet_rate
-        #     m_ab = float(self.zero_point - 2.5 * math.log10(c))
-        #     m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
-
-        #     if debug:
-        #         print("[TrailPhotometry DEBUG — RATE image]")
-        #         print(f"  BUNIT                  = {bunit_str}")
-        #         print(f"  Aperture sum Cap      = {Cap:.3f} (counts/s)")
-        #         print(f"  bkg_mean              = {bkg_mean:.6f} (counts/s/pix)")
-        #         print(f"  bkg_rms               = {bkg_std:.6f} (counts/s/pix)")
-        #         print(f"  A_ap_eff              = {A_ap_eff:.3f} (pix)")
-        #         print(f"  A_bg_eff              = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
-        #         print(f"  Net rate Cnet_rate    = {Cnet_rate:.6f} (counts/s)")
-        #         print(f"  ZP used               = {self.zero_point:.6f} ({self._zp_prov})")
-        #         print(f"  m_AB                  = {m_ab:.6f} mag")
-
-        #     return PhotometryResult(
-        #         mag_ab=m_ab,
-        #         mag_err=m_err if np.isfinite(m_err) else None,
-        #         count_rate=c,
-        #         count_rate_err=count_rate_err if np.isfinite(count_rate_err) else None,
-        #         net_counts=None,
-        #         net_counts_err=None,
-        #         aper_counts=None,  # Cap is RATE sum; keep None to avoid confusion
-        #         bkg_per_pix=bkg_mean,
-        #         bkg_rms_per_pix=bkg_std,
-        #         A_ap_eff=A_ap_eff,
-        #         A_bg_eff=A_bg_eff,
-        #         zp_ab=self.zero_point,
-        #         zp_keyword=self._zp_prov["keyword"],
-        #         zp_source_file=self._zp_prov["file"],
-        #         zp_source_kind=self._zp_prov["kind"],
-        #     )
 
         # -------- COUNTS images --------
         exptime = self._exptime_from()
@@ -433,38 +435,19 @@ class PhotTable:
             raise ValueError("Non-positive count rate; cannot compute magnitude.")
         m_ab = float(self.zero_point - 2.5 * math.log10(c))
 
+        # Uncertainty in COUNTS domain:
+        # Background variance in counts:
+        var_bkg_counts = np.nan
+        if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+            var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
 
-        # Uncertainty in COUNTS domain (classical aperture-photometry formula):
-        # Var(Cnet) = Cap + (A_ap/A_bg)^2 * B, where B is total background counts in bg region.
+        # Source Poisson variance in counts:
+        var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
 
-        if (A_bg_eff is None) or (not np.isfinite(A_bg_eff)) or (A_bg_eff <= 0):
-            raise ValueError("Invalid background area A_bg_eff; cannot compute uncertainties.")
-        if (A_ap_eff is None) or (not np.isfinite(A_ap_eff)) or (A_ap_eff <= 0):
-            raise ValueError("Invalid aperture area A_ap_eff; cannot compute uncertainties.")
-
-        # Total background counts measured in the background region
-        B = bkg_mean * A_bg_eff  # counts
-
-        # Classical variance in net counts
-        var_Cnet = Cap + (A_ap_eff / A_bg_eff) ** 2 * B
-        var_Cnet = float(max(var_Cnet, 0.0))
-
-        Cnet_err = float(np.sqrt(var_Cnet))  # counts
-        count_rate_err = Cnet_err / exptime  # counts/s
-
+        terms_counts = [v for v in (var_bkg_counts, var_src_counts) if np.isfinite(v)]
+        Cnet_err = float(np.sqrt(max(sum(terms_counts), 0.0))) if terms_counts else np.nan
+        count_rate_err = Cnet_err / exptime if np.isfinite(Cnet_err) else np.nan
         m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
-
-        # var_bkg_counts = np.nan
-        # if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-        #     var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
-
-        # # Source Poisson variance in counts:
-        # var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
-
-        # terms_counts = [v for v in (var_bkg_counts, var_src_counts) if np.isfinite(v)]
-        # Cnet_err = float(np.sqrt(max(sum(terms_counts), 0.0))) if terms_counts else np.nan
-        # count_rate_err = Cnet_err / exptime if np.isfinite(Cnet_err) else np.nan
-        # m_err = float(AB_PROP_COEFF * count_rate_err / c) if (np.isfinite(count_rate_err) and c > 0) else np.nan
 
         if debug:
             print("[TrailPhotometry DEBUG — COUNTS image]")
@@ -499,3 +482,47 @@ class PhotTable:
             zp_source_file=self._zp_prov["file"],
             zp_source_kind=self._zp_prov["kind"],
         )
+
+
+def apply_apcorr(result: PhotometryResult, apcorr_mag: float, apcorr_mag_err: float = 0.0) -> PhotometryResult:
+    """Populate apcorr_mag and corrected magnitude fields on an existing PhotometryResult.
+
+    This keeps result.mag_ab and result.mag_err untouched, and provides:
+      - result.apcorr_mag
+      - result.mag_ab_apcorr = result.mag_ab + apcorr_mag
+      - result.mag_ab_apcorr_err = hypot(result.mag_err, apcorr_mag_err)
+
+    Parameters
+    ----------
+    result
+        Existing photometry result (must have mag_ab).
+    apcorr_mag
+        Aperture correction in magnitudes: -2.5*log10(f_apcorr).
+    apcorr_mag_err
+        Uncertainty on apcorr_mag (e.g. robust scatter from selected stars).
+    """
+    try:
+        apcorr_mag = float(apcorr_mag)
+    except Exception:
+        apcorr_mag = np.nan
+    try:
+        apcorr_mag_err = float(apcorr_mag_err)
+    except Exception:
+        apcorr_mag_err = np.nan
+
+    result.apcorr_mag = apcorr_mag if np.isfinite(apcorr_mag) else None
+    result.apcorr_mag_err = apcorr_mag_err if np.isfinite(apcorr_mag_err) else None
+
+    if result.mag_ab is None or not np.isfinite(result.mag_ab) or result.apcorr_mag is None:
+        result.mag_ab_apcorr = None
+        result.mag_ab_apcorr_err = None
+        return result
+
+    result.mag_ab_apcorr = float(result.mag_ab) + float(result.apcorr_mag)
+
+    if result.mag_err is None or not np.isfinite(result.mag_err) or result.apcorr_mag_err is None:
+        result.mag_ab_apcorr_err = None
+    else:
+        result.mag_ab_apcorr_err = float(np.hypot(float(result.mag_err), float(result.apcorr_mag_err)))
+
+    return result

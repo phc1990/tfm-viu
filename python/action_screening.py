@@ -9,7 +9,7 @@ from typing import Any, Sequence, List
 
 
 from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, DECISION_COLS, POS1_DEC_COLS, POS1_RA_COLS, POS2_DEC_COLS, POS2_RA_COLS, FITS_FILE_COLS, DETECTION_VALS, NON_DETECTION_VALS
-from common import extract_row_value, append_row, find_fits_files, close_subprocess, request_user_input 
+from common import extract_row_value, append_row, find_fits_files, find_fits_files_without_srclist, close_subprocess, request_user_input 
 
 
 def _ds9_zoom_args(zoom: str) -> List[str]:
@@ -104,10 +104,11 @@ def action_screening(
     ra2: float = float(extract_row_value(input_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(input_row, POS2_DEC_COLS))
 
-    fits_paths: list[Path] = find_fits_files(
+    fits_paths: list[Path] = find_fits_files_without_srclist(
         folder=config['INPUT']['DOWNLOAD_DIRECTORY'],
         observation_id=observation_id,
         filter=filter,
+        debug=True
     )
 
     if not fits_paths:
