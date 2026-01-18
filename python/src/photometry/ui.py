@@ -2,6 +2,7 @@
 Improved User Interface (UI) for trail selection with zoom/pan and live preview.
 This version DOES NOT finalize on left click; only Enter finalizes.
 """
+from pathlib import Path
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
@@ -13,7 +14,9 @@ except Exception:
     # very old photutils (<1.0)
     from photutils import RectangularAperture, RectangularAnnulus
     
-from typing import Optional
+from typing import Optional, Tuple, List
+from astropy.io import fits
+
 from src.photometry.hdu import HDUW
 
 from astropy.coordinates import SkyCoord
@@ -212,194 +215,26 @@ class UI:
         self.fig.canvas.mpl_connect('button_press_event', self._on_mouse_press)
         self.fig.canvas.mpl_connect('button_release_event', self._on_mouse_release)
         self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
-        self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
+        self.fig.canvas.mpl_connect('key_press_event', self._on_key_press) 
 
-    # def add_sources(
-    #     self,
-    #     sources=None,
-    #     pos1=None,
-    #     pos2=None,
-    #     wcs=None,
-    #     **style,
-    # ):
-    #     """
-    #     Pinta marcadores de fuentes sobre self.ax.
+        # ---------- SRCLIST cache (for nearest-neighbour selection) ----------
+        self._srclist_path: Optional[Path] = None
+        self._srclist_ra: Optional[np.ndarray] = None
+        self._srclist_dec: Optional[np.ndarray] = None
+        self._srclist_x: Optional[np.ndarray] = None
+        self._srclist_y: Optional[np.ndarray] = None
 
-    #     Acepta:
-    #     - sources:
-    #         * dict con {'xcentroid','ycentroid'}  (píxeles)
-    #         * dict con {'ra','dec'}               (grados; requiere WCS)
-    #         * iterable de (x,y) en píxeles
-    #         * iterable de (ra,dec) en grados (requiere WCS)
-    #         * dict con {'pos1':(ra,dec)| (x,y), 'pos2':(...)}
-    #     - pos1, pos2: tuplas (ra,dec) en grados o (x,y) en píxeles.
-    #     - wcs: astropy.wcs.WCS para RA/Dec→píxeles; si None usa self.wcs.
-    #     - style: kwargs para scatter (color, s, etc.)
+        # ---------- Calibration (apcorr) interaction state ----------
+        self._calib_arm = False               # user pressed 'A' and now must press 1..5
+        self._calib_active = False            # currently in calibration slot workflow
+        self._calib_slot: Optional[int] = None
+        self._calib_width: Optional[float] = None   # adjustable length for star box
+        self._calib_center: Optional[Tuple[float, float]] = None
+        self._calib_srclist_index: Optional[int] = None
 
-    #     Devuelve lista de artistas creados.
-    #     """
-    #     ax = getattr(self, "ax", None)
-    #     if ax is None:
-    #         print("[UI] WARN: no hay self.ax; no se pueden dibujar fuentes.")
-    #         return []
+        # Store star selections: slot -> dict with star + geometry
+        self.calib_star_selections: Dict[int, Dict[str, Any]] = {}
 
-    #     W = wcs or getattr(self, "wcs", None)
-
-    #     # Estilo visible por defecto
-    #     base_style = dict(marker='o', s=30, facecolor='none', edgecolor='blue',
-    #                     linewidths=0.8, alpha=0.95, zorder=10)
-    #     # Si el usuario pasa 'color', úsalo como edgecolor si no se indicó
-    #     if "color" in style and "edgecolor" not in style and "ec" not in style:
-    #         base_style["edgecolor"] = style.pop("color")
-    #     base_style.update(style or {})
-
-    #     # Estilos específicos para pos1/pos2
-    #     pos1_style = dict(
-    #         marker="o",
-    #         s=90,                 
-    #         facecolors="none",
-    #         edgecolors="tab:green",
-    #         linewidths=1.6,       
-    #         alpha=0.98,
-    #         zorder=12,
-    #     )
-    #     pos2_style = dict(
-    #         marker="o",
-    #         s=90,
-    #         facecolors="none",
-    #         edgecolors="tab:red",
-    #         linewidths=1.6,
-    #         alpha=0.98,
-    #         zorder=12,
-    #     )
-
-    #     xs, ys = [], []
-
-    #     def _push_xy(x, y):
-    #         try:
-    #             if np.isfinite(x) and np.isfinite(y):
-    #                 xs.append(float(x)); ys.append(float(y))
-    #         except Exception:
-    #             pass
-
-    #     def _world_to_pixel_list(ra_arr, dec_arr):
-    #         if W is None:
-    #             print("[UI] WARN: RA/Dec sin WCS; omito esas fuentes.")
-    #             return
-    #         try:
-    #             sc = SkyCoord(np.atleast_1d(ra_arr) * u.deg, np.atleast_1d(dec_arr) * u.deg, frame="icrs")
-    #             X, Y = W.world_to_pixel(sc)
-    #             for Xk, Yk in zip(np.atleast_1d(X), np.atleast_1d(Y)):
-    #                 _push_xy(Xk, Yk)
-    #         except Exception as e:
-    #             print(f"[UI] WARN: fallo RA/Dec→pix: {e}")
-
-    #     def _add_point(pt):
-    #         if pt is None or not isinstance(pt, (tuple, list)) or len(pt) != 2:
-    #             return
-    #         a, b = pt
-    #         # Heurística: si parece RA/Dec y hay WCS, convierto
-    #         if W is not None and isinstance(a, (int, float)) and isinstance(b, (int, float)) \
-    #         and (-360.0 <= a <= 360.0) and (-90.0 <= b <= 90.0):
-    #             _world_to_pixel_list([a], [b])
-    #         else:
-    #             _push_xy(a, b)
-
-    #     # ---- 1) sources ----
-    #     try:
-    #         if sources is not None:
-    #             if isinstance(sources, dict):
-    #                 # Posibles alias
-    #                 if "xcentroid" in sources and "ycentroid" in sources:
-    #                     xarr = np.atleast_1d(sources["xcentroid"])
-    #                     yarr = np.atleast_1d(sources["ycentroid"])
-    #                     for X, Y in zip(xarr, yarr):
-    #                         _push_xy(X, Y)
-    #                 elif "ra" in sources and "dec" in sources:
-    #                     _world_to_pixel_list(sources["ra"], sources["dec"])
-    #                 else:
-    #                     # ¿pos1/pos2 dentro del dict?
-    #                     if "pos1" in sources: _add_point(sources["pos1"])
-    #                     if "pos2" in sources: _add_point(sources["pos2"])
-    #                     # O algún iterable de puntos en el dict
-    #                     for v in sources.values():
-    #                         try:
-    #                             for pt in v:
-    #                                 _add_point(pt)
-    #                         except Exception:
-    #                             continue
-    #             else:
-    #                 # Iterable de puntos (x,y) o (ra,dec)
-    #                 for pt in sources:
-    #                     _add_point(pt)
-    #     except Exception as e:
-    #         print(f"[UI] WARN: no pude interpretar 'sources': {e}")
-        
-    #     # ---- 2) pos1 / pos2 ----
-    #         _add_point(pos1)
-    #         _add_point(pos2)
-
-    #         arts = []
-
-    #         # Convertir puntos por separado para poder aplicar estilos distintos
-    #         p1 = None
-    #         p2 = None
-
-    #     if pos1 is not None:
-    #         p1 = _add_point(pos1)
-    #         x1, y1 = pos1
-    #         scat1 = ax.scatter([x1], [y1], **pos1_style)
-    #         arts.append(scat1)
-    #     if pos2 is not None:
-    #         p2 = _add_point(pos2)
-    #         x2, y2 = p2
-    #         scat2 = ax.scatter([x2], [y2], **pos2_style)
-    #         arts.append(scat2)
-
-    #     # Si no hay puntos válidos, informar
-    #     if len(arts) == 0:
-    #         print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
-    #         return
-
-    #     # Guardar artistas para poder eliminarlos luego (evita stacking)
-    #     if not hasattr(self, "_marker_artists"):
-    #         self._marker_artists = []
-
-    #     # Eliminar marcadores previos
-    #     for a in self._marker_artists:
-    #         try:
-    #             a.remove()
-    #         except Exception:
-    #             pass
-    #     self._marker_artists = arts
-
-    #     # Redibujar
-    #     try:
-    #         self.update()
-    #     except Exception:
-    #         ax.figure.canvas.draw_idle()
-
-        
-
-
-    #     # arts = []
-    #     # if len(xs) > 0:
-    #     #     scat = ax.scatter(xs, ys, **base_style)
-    #     #     arts.append(scat)
-    #     #     try:
-    #     #         # Si hay método update, úsalo; si no, dibuja
-    #     #         self.update()
-    #     #     except Exception:
-    #     #         ax.figure.canvas.draw_idle()
-    #     # else:
-    #     #     print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
-
-    #     # # Guarda artistas (opcional) para poder limpiarlos luego si quieres
-    #     # if not hasattr(self, "_source_artists"):
-    #     #     self._source_artists = []
-    #     # self._source_artists.extend(arts)
-
-    #     # return arts
 
     def add_sources(
         self,
@@ -559,8 +394,13 @@ class UI:
 
         # Dibuja sources (si hay)
         if len(xs) > 0:
+            xlim0 = ax.get_xlim()
+            ylim0 = ax.get_ylim()
             scat = ax.scatter(xs, ys, **base_style)
             arts.append(scat)
+            ax.set_xlim(xlim0)
+            ax.set_ylim(ylim0)
+
 
         # Dibuja pos1/pos2 con estilo propio (si hay)
         xy1 = _pt_to_xy(pos1)
@@ -635,33 +475,6 @@ class UI:
         self.fig.canvas.flush_events()
 
     # -------------------- helpers --------------------
-    # def _draw_hint_text(self, text=None):
-    #     # Remove old hint if present
-    #     if self._hint is not None:
-    #         try:
-    #             self._hint.remove()
-    #         except Exception:
-    #             pass
-    #         self._hint = None
-
-    #     default = (
-    #         "Left click: start / set end (no finalize)\n"
-    #         "Wheel: zoom | Right-drag: pan\n"
-    #         "[/]: height  { / }: annulus  R: reset\n"
-    #         "Enter: accept & close   Esc: cancel"
-    #     )
-
-    #     msg = default if text is None else text
-
-    #     self._hint = self.ax.text(
-    #         0.02, 0.98, msg,
-    #         transform=self.ax.transAxes, va='top', ha='left',
-    #         color='cyan', fontsize=8,
-    #         bbox=dict(facecolor='black', alpha=0.3, pad=3),
-    #         zorder=50
-    #     )
-    #     self.update()
-
     def _draw_hint_text(self, text=None):
         # Remove old hint first
         if getattr(self, "_hint", None) is not None:
@@ -699,16 +512,6 @@ class UI:
                 pass
         self._hint = None
         self.update()
-
-
-    # def _clear_hint_text(self):
-    #     if self._hint is not None:
-    #         try:
-    #             self._hint.remove()
-    #         except Exception:
-    #             pass
-    #     self._hint = None
-    #     self.update()
 
     def _hard_reset_selector(self, sel):
         """
@@ -769,6 +572,19 @@ class UI:
 
         sel = self._selector
 
+        # 0) If calibration slot is active: left-click selects nearest SRCLIST source
+        if self._calib_active and event.button == 1 and event.xdata is not None and event.ydata is not None:
+            hit = self._nearest_srclist(event.xdata, event.ydata, max_dist_pix=10.0)
+            if hit is None:
+                print("[UI] WARN: No SRCLIST source near click.")
+                return
+            j, xs, ys, ra, dec = hit
+            self._calib_srclist_index = j
+            self._calib_center = (xs, ys)
+            print(f"[UI] Selected SRCLIST source: idx={j}  RA={ra:.6f} Dec={dec:.6f}  x={xs:.2f} y={ys:.2f}")
+            self._draw_calib_preview(self._selector)
+            return
+
         # 1) OUTSIDE MODE: right-click places background box (consume click; do NOT pan)
         if self._outside_mode and event.button == 3:
             self._outside_mode = False
@@ -784,22 +600,6 @@ class UI:
         if event.button == 3:
             self._pan_press = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
             return
-
-        # # 3) Left click: trail selection
-        # if event.button != 1:
-        #     return
-
-        # if sel._start is None:
-        #     sel._start = (event.xdata, event.ydata)
-        #     sel._end = (event.xdata, event.ydata)
-        #     sel._compute_from_points(sel._start, sel._end)
-        #     self._draw_preview(sel)
-        # else:
-        #     sel._end = (event.xdata, event.ydata)
-        #     sel._compute_from_points(sel._start, sel._end)
-        #     self._draw_preview(sel)
-        #     if sel.finalize_on_click:
-        #         sel.done = True
 
 
         # 3) Left click: trail selection
@@ -853,18 +653,111 @@ class UI:
         if sel._start is None or sel._end is None:
              return
 
-        # if self._selector is None or self._selector.done:
-        #     return
-        # sel = self._selector
-        # if sel._start is not None and self._ensure_on_axes(event):
-        #     sel._end = (event.xdata, event.ydata)
-        #     sel._compute_from_points(sel._start, sel._end)
-        #     self._draw_preview(sel)
-
     def _on_key_press(self, event):
         if self._selector is None:
             return
         sel = self._selector
+
+        # Section for SRCLIST apcorr selection
+            # ---------- Calibration mode arming: press A then 1..5 ----------
+        if event.key in ("a", "A"):
+            self._calib_arm = True
+            self._calib_active = False
+            self._calib_slot = None
+            self._draw_hint_text("Calibration (apcorr) mode:\n"
+                                "Press a digit 1..5 to choose slot (A1..A5), then LEFT-click near a yellow source.\n"
+                                "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
+                                "Enter: save slot   R: reset slot")
+            return
+
+        if self._calib_arm and event.key in ("1", "2", "3", "4", "5"):
+            self._calib_slot = int(event.key)
+            self._calib_arm = False
+            self._calib_active = True
+
+            # start with trail geometry (same height / annulus / theta / width if available)
+            if sel.width is None or not np.isfinite(sel.width):
+                self._calib_width = 30.0
+            else:
+                self._calib_width = float(sel.width)
+
+            self._calib_center = None
+            self._calib_srclist_index = None
+
+            self._draw_hint_text(f"Calibration slot A{self._calib_slot} active:\n"
+                                "LEFT-click near a yellow source to place the same box/annulus centered on that star.\n"
+                                "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
+                                "Enter: save slot   R: reset slot")
+            return
+
+        # ---------- While calibration slot is active ----------
+        if self._calib_active:
+            # Arrow keys adjust LENGTH (width) of the star box
+            k = (event.key or "").lower()
+
+            LEFT_KEYS = {"left", "shift+left", "ctrl+left", "alt+left"}
+            RIGHT_KEYS = {"right", "shift+right", "ctrl+right", "alt+right"}
+
+            if k in LEFT_KEYS:
+                if self._calib_width is not None:
+                    self._calib_width = max(5.0, float(self._calib_width) - 1.0)
+                    self._safe_redraw_preserve_view(lambda: self._draw_calib_preview(sel))
+                return
+
+            if k in RIGHT_KEYS:
+                if self._calib_width is not None:
+                    self._calib_width = float(self._calib_width) + 1.0
+                    self._safe_redraw_preserve_view(lambda: self._draw_calib_preview(sel))
+                return
+
+            # Reset only this slot
+            if event.key in ("r", "R"):
+                if self._calib_slot in self.calib_star_selections:
+                    del self.calib_star_selections[self._calib_slot]
+                self._calib_center = None
+                self._calib_srclist_index = None
+                self._remove_preview()  # removes current preview (calib box)
+                self._draw_hint_text(f"Calibration slot A{self._calib_slot} reset.\n"
+                                    "LEFT-click near a yellow source to select again.")
+                return
+
+            # Save slot on Enter (do NOT close figure)
+            if event.key == "enter":
+                if self._calib_slot is None or self._calib_center is None or self._calib_srclist_index is None:
+                    print("[UI] WARN: Calibration slot not ready (no star selected).")
+                    return
+
+                cx, cy = self._calib_center
+                self.calib_star_selections[self._calib_slot] = dict(
+                    slot=self._calib_slot,
+                    srclist_index=self._calib_srclist_index,
+                    x=cx, y=cy,
+                    width=float(self._calib_width),
+                    height=float(sel.height),
+                    semi_out=float(sel.semi_out),
+                    theta=float(sel.theta) if sel.theta is not None else 0.0,
+                    ra=float(self._srclist_ra[self._calib_srclist_index]) if self._srclist_ra is not None else np.nan,
+                    dec=float(self._srclist_dec[self._calib_srclist_index]) if self._srclist_dec is not None else np.nan,
+                    srclist_file=str(self._srclist_path) if self._srclist_path else "",
+                )
+
+                print(f"[UI] Calibration saved: A{self._calib_slot}  idx={self._calib_srclist_index}  "
+                    f"x={cx:.2f} y={cy:.2f}  width={self._calib_width:.1f} height={sel.height:.1f} semi_out={sel.semi_out:.1f}")
+
+                # Exit calibration slot (user can press A then next digit)
+                self._calib_active = False
+                self._calib_slot = None
+                self._calib_center = None
+                self._calib_srclist_index = None
+                self._clear_hint_text()
+                # Optionally redraw trail preview
+                try:
+                    self._draw_preview(sel)
+                except Exception:
+                    pass
+                return
+
+
 
         if event.key == 'escape':
             sel.canceled = True
@@ -878,38 +771,6 @@ class UI:
                 plt.close(self.fig)
             return
 
-        # if event.key in ('r', 'R'):
-        #     # reset selection + any outside background override
-        #     self._outside_mode = False
-        #     self._clear_hint_text()
-        #     try:
-        #         sel.reset_annulus_centre()
-        #     except Exception:
-        #         pass
-
-        #     sel._start, sel._end, sel.done = None, None, False
-        #     self._remove_preview()
-        #     self.update()
-        #     return
-
-        # # Outside background mode toggle
-        # if event.key and event.key.lower() == "o":
-        #     # Require trail to be defined before allowing outside background placement
-        #     if sel._start is not None and sel._end is not None:
-        #         self._outside_mode = True
-        #         self._draw_hint_text("Outside background mode: RIGHT-click to define background box")
-        #     return
-
-        # # Reset background to follow trail
-        # if event.key in ('i', 'I'):
-        #     self._outside_mode = False
-        #     self._clear_hint_text()
-        #     try:
-        #         sel.reset_annulus_centre()
-        #         self._draw_preview(sel)
-        #     except Exception:
-        #         pass
-        #     return
         # Toggle outside-background placement
         if event.key and event.key.lower() == "o":
             # Only meaningful once a trail exists
@@ -1038,3 +899,394 @@ class UI:
             sel._an_patch = self._an_patch
 
         self.update()
+
+
+    # -------------------- SRCLIST overlay --------------------
+    # @staticmethod
+    # def _read_srclist_radec(srclist_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+    #     """Read RA/Dec arrays (deg) from an OM SRCLIST-like FITS table.
+
+    #     Tries common column conventions (case-insensitive):
+    #       - RA / DEC
+    #       - RA_DEG / DEC_DEG
+    #       - RAJ2000 / DEJ2000
+    #     """
+    #     srclist_path = Path(srclist_path)
+    #     if not srclist_path.exists():
+    #         raise FileNotFoundError(f"SRCLIST not found: {srclist_path}")
+
+    #     with fits.open(str(srclist_path), memmap=False) as hdul:
+    #         tab = None
+    #         for hdu in hdul:
+    #             if getattr(hdu, "data", None) is None:
+    #                 continue
+    #             if getattr(hdu, "columns", None) is not None:
+    #                 tab = hdu.data
+    #                 break
+    #         if tab is None:
+    #             raise ValueError(f"No table HDU found in SRCLIST: {srclist_path.name}")
+
+    #         colnames = [c.upper() for c in tab.columns.names]
+
+    #         def _get_col(*cands: str):
+    #             for c in cands:
+    #                 cu = c.upper()
+    #                 if cu in colnames:
+    #                     return tab[tab.columns.names[colnames.index(cu)]]
+    #             return None
+
+    #         ra = _get_col("RA", "RA_DEG", "RAJ2000", "RA_OBJ")
+    #         dec = _get_col("DEC", "DEC_DEG", "DEJ2000", "DEC_OBJ")
+    #         if ra is None or dec is None:
+    #             raise KeyError(
+    #                 f"Could not find RA/DEC columns in {srclist_path.name}. "
+    #                 f"Available: {tab.columns.names}"
+    #             )
+
+    #         ra = np.asarray(ra, dtype=float)
+    #         dec = np.asarray(dec, dtype=float)
+    #         m = np.isfinite(ra) & np.isfinite(dec)
+    #         return ra[m], dec[m]
+
+    
+    # def add_srclist_overlay(
+    #     self,
+    #     srclist_path: Path,
+    #     *,
+    #     marker: str = ".",
+    #     s: float = 14,
+    #     alpha: float = 0.8,
+    #     color: str = "yellow",
+    #     zorder: int = 11,
+    # ) -> List:
+    #     """Overplot filtered SRCLIST sources as yellow points (pixel coords).
+
+    #     Uses XPOS/YPOS directly (no WCS needed).
+    #     Applies COI filter: (CORR_RATE - RATE)/RATE < 0.02 (and RATE>0).
+    #     Caches arrays for nearest-neighbour picking later.
+    #     """
+    #     try:
+    #         tab = self._read_srclist_table(Path(srclist_path))
+
+    #         x = tab.get("XPOS")
+    #         y = tab.get("YPOS")
+    #         rate = tab.get("RATE")
+    #         corr_rate = tab.get("CORR_RATE")
+
+    #         if x is None or y is None:
+    #             raise KeyError("SRCLIST table missing XPOS/YPOS columns")
+
+    #         x = np.asarray(x, dtype=float)
+    #         y = np.asarray(y, dtype=float)
+
+    #         sig = tab.get("SIGNIFICANCE")
+
+    #         mask = np.isfinite(x) & np.isfinite(y)
+
+    #         # Detection quality pre-filter
+    #         if sig is not None:
+    #             sig = np.asarray(sig, dtype=float)
+    #             mask &= np.isfinite(sig) & (sig > 10.0)   # adjust threshold (7–15) as needed
+
+    #         # COI filter
+    #         if rate is not None and corr_rate is not None:
+    #             rate = np.asarray(rate, dtype=float)
+    #             corr_rate = np.asarray(corr_rate, dtype=float)
+    #             with np.errstate(divide="ignore", invalid="ignore"):
+    #                 frac = (corr_rate - rate) / rate
+
+    #             mask_coi = (
+    #                 np.isfinite(frac) &
+    #                 np.isfinite(rate) &
+    #                 (rate > 0) &
+    #                 (np.abs(frac) < 0.02)
+    #             )
+
+    #             # apply COI only if enough sources remain
+    #             if np.count_nonzero(mask & mask_coi) >= 5:
+    #                 mask &= mask_coi
+    #             else:
+    #                 print("[UI] WARN: COI filter removed almost all sources; overlaying without COI filter.")
+
+
+    #     except Exception as e:
+    #         print(f"[UI] WARN: could not load SRCLIST overlay ({srclist_path}): {e}")
+    #         return []
+
+    #     # Cache for nearest-neighbour and later rate lookup
+    #     self._srclist_path = Path(srclist_path)
+    #     self._srclist_x = x[mask]
+    #     self._srclist_y = y[mask]
+
+    #     rate_all = tab.get("RATE")
+    #     rateerr_all = tab.get("RATE_ERR")
+    #     corrrate_all = tab.get("CORR_RATE")
+    #     srcnum_all = tab.get("SRCNUM")
+
+    #     self._srclist_rate = np.asarray(rate_all, dtype=float)[mask] if rate_all is not None else None
+    #     self._srclist_rate_err = np.asarray(rateerr_all, dtype=float)[mask] if rateerr_all is not None else None
+    #     self._srclist_corr_rate = np.asarray(corrrate_all, dtype=float)[mask] if corrrate_all is not None else None
+    #     self._srclist_srcnum = np.asarray(srcnum_all)[mask] if srcnum_all is not None else None
+    #     self._srclist_row_index = np.nonzero(mask)[0]
+
+
+    #     return self.add_sources(
+    #         sources={"xcentroid": self._srclist_x, "ycentroid": self._srclist_y},
+    #         marker=marker,
+    #         s=s,
+    #         facecolors=color,
+    #         edgecolors=color,
+    #         linewidths=0,
+    #         alpha=alpha,
+    #         zorder=zorder,
+    #     )
+
+
+    def add_srclist_overlay(
+        self,
+        srclist_path: Path,
+        *,
+        wcs=None,
+        marker: str = ".",
+        s: float = 20,
+        alpha: float = 0.8,
+        color: str = "yellow",
+        zorder: int = 11,
+        coi_frac_max: float = 0.02,
+        min_points_after_coi: int = 5,
+    ) -> List:
+        """Overplot SRCLIST sources as yellow points.
+
+        Strategy:
+        1) Read SRCLIST table columns (RA_CORR/DEC_CORR preferred, else RA/DEC; also RATE/CORR_RATE).
+        2) Apply COI filter where possible: |(CORR_RATE - RATE)/RATE| < coi_frac_max and RATE>0.
+            If too few points remain, fall back to plotting without COI filtering.
+        3) Convert world -> pixel using the WCS of the currently displayed image (typically FSIMAG).
+            This avoids the mismatch that occurs if using XPOS/YPOS measured on a different grid (e.g. FIMAG).
+        4) Cache pixel coordinates + SRCLIST rates for nearest-neighbour selection later.
+        """
+        srclist_path = Path(srclist_path)
+
+        try:
+            tab = self._read_srclist_table(srclist_path)
+
+            # Prefer corrected coordinates if present
+            ra = tab.get("RA_CORR")
+            dec = tab.get("DEC_CORR")
+            if ra is None or dec is None:
+                ra = tab.get("RA")
+                dec = tab.get("DEC")
+
+            if ra is None or dec is None:
+                raise KeyError("SRCLIST table missing RA/DEC (or RA_CORR/DEC_CORR) columns")
+
+            ra = np.asarray(ra, dtype=float)
+            dec = np.asarray(dec, dtype=float)
+
+            rate = tab.get("RATE")
+            corr_rate = tab.get("CORR_RATE")
+
+            # Base mask: finite sky coords
+            mask = np.isfinite(ra) & np.isfinite(dec)
+
+            # COI filter (optional + robust fallback)
+            if rate is not None and corr_rate is not None:
+                rate = np.asarray(rate, dtype=float)
+                corr_rate = np.asarray(corr_rate, dtype=float)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    frac = (corr_rate - rate) / rate
+
+                mask_coi = (
+                    np.isfinite(frac) &
+                    np.isfinite(rate) &
+                    (rate > 0) &
+                    (np.abs(frac) < coi_frac_max)
+                )
+
+                # Apply only if enough points remain
+                if np.count_nonzero(mask & mask_coi) >= min_points_after_coi:
+                    mask &= mask_coi
+                else:
+                    print("[UI] WARN: COI filter removed almost all sources; overlaying without COI filter.")
+
+            # Need WCS to plot correctly over FSIMAG
+            W = wcs or getattr(self, "wcs", None)
+            if W is None:
+                raise ValueError("No WCS available to project SRCLIST RA/Dec onto image pixels")
+
+            sc = SkyCoord(ra[mask] * u.deg, dec[mask] * u.deg, frame="icrs")
+            x, y = W.world_to_pixel(sc)
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
+
+            # Pixel validity mask (after projection)
+            mxy = np.isfinite(x) & np.isfinite(y)
+            x = x[mxy]
+            y = y[mxy]
+
+            # Cache for nearest-neighbour and later lookup
+            # We must apply the same mxy selection to all cached arrays.
+            # Build index array of the rows that survived sky-mask, then filter by mxy.
+            idx_rows = np.nonzero(mask)[0]
+            idx_rows = idx_rows[mxy]
+
+            self._srclist_path = srclist_path
+            self._srclist_x = x
+            self._srclist_y = y
+
+            rate_all = tab.get("RATE")
+            rateerr_all = tab.get("RATE_ERR")
+            corrrate_all = tab.get("CORR_RATE")
+            srcnum_all = tab.get("SRCNUM")
+            qflag_all = tab.get("QFLAG")
+            cflag_all = tab.get("CFLAG")
+            eflag_all = tab.get("EFLAG")
+            sig_all = tab.get("SIGNIFICANCE")
+
+            self._srclist_rate = np.asarray(rate_all, dtype=float)[idx_rows] if rate_all is not None else None
+            self._srclist_rate_err = np.asarray(rateerr_all, dtype=float)[idx_rows] if rateerr_all is not None else None
+            self._srclist_corr_rate = np.asarray(corrrate_all, dtype=float)[idx_rows] if corrrate_all is not None else None
+            self._srclist_srcnum = np.asarray(srcnum_all)[idx_rows] if srcnum_all is not None else None
+            self._srclist_qflag = np.asarray(qflag_all)[idx_rows] if qflag_all is not None else None
+            self._srclist_cflag = np.asarray(cflag_all)[idx_rows] if cflag_all is not None else None
+            self._srclist_eflag = np.asarray(eflag_all)[idx_rows] if eflag_all is not None else None
+            self._srclist_significance = np.asarray(sig_all, dtype=float)[idx_rows] if sig_all is not None else None
+
+            # Also keep sky coords for reporting
+            self._srclist_ra = ra[idx_rows]
+            self._srclist_dec = dec[idx_rows]
+
+        except Exception as e:
+            print(f"[UI] WARN: could not load SRCLIST overlay ({srclist_path}): {e}")
+            return []
+
+        # Plot points in pixel coords; dict form avoids RA/Dec heuristics in add_sources
+        return self.add_sources(
+            sources={"xcentroid": self._srclist_x, "ycentroid": self._srclist_y},
+            marker=marker,
+            s=s,
+            facecolors=color,
+            edgecolors=color,
+            linewidths=0,
+            alpha=alpha,
+            zorder=zorder,
+        )
+
+
+    def _nearest_srclist(self, x: float, y: float, max_dist_pix: float = 8.0):
+        """Return (idx, x_s, y_s, ra_s, dec_s) of nearest SRCLIST source to (x,y)."""
+        if self._srclist_x is None or self._srclist_y is None:
+            return None
+        dx = self._srclist_x - float(x)
+        dy = self._srclist_y - float(y)
+        d2 = dx*dx + dy*dy
+        j = int(np.nanargmin(d2))
+        if not np.isfinite(d2[j]) or np.sqrt(d2[j]) > max_dist_pix:
+            return None
+        return (j, float(self._srclist_x[j]), float(self._srclist_y[j]),
+                float(self._srclist_ra[j]), float(self._srclist_dec[j]))
+
+    def _draw_calib_preview(self, sel):
+        """Draw preview for calibration-star box using current selector geometry + calib center/width."""
+        if self._calib_center is None or self._calib_width is None:
+            return
+        cx, cy = self._calib_center
+        theta = float(sel.theta) if sel.theta is not None else 0.0
+
+        # Build a "fake" selector-like object with the required attributes
+        class _Tmp:
+            pass
+        tmp = _Tmp()
+        tmp.height = float(sel.height)
+        tmp.semi_out = float(sel.semi_out)
+        tmp.theta = theta
+        tmp.centre = (cx, cy)
+        tmp.width = float(self._calib_width)
+
+        # Use TrailSelector's build helpers if you have them; if not, rely on existing preview code:
+        # Here we assume your preview code uses tmp.centre/tmp.width/tmp.height/tmp.theta/tmp.semi_out
+        # and creates tmp.rectangular_aperture/tmp.rectangular_annulus. If not, tell me and I adapt.
+
+        try:
+            # If your TrailSelector already has a method to compute rectangles from centre/width/theta:
+            sel._compute_geometry_from_centre_width(tmp.centre, tmp.width, tmp.theta)  # only if exists
+        except Exception:
+            pass
+
+        # Minimal: set up the photutils apertures directly if your preview expects those
+        tmp.rectangular_aperture = RectangularAperture(tmp.centre, w=tmp.width, h=tmp.height, theta=tmp.theta)
+        tmp.rectangular_annulus = RectangularAnnulus(tmp.centre, w_in=tmp.width, h_in=tmp.height,
+                                                    w_out=tmp.width + 2*tmp.semi_out,
+                                                    h_out=tmp.height + 2*tmp.semi_out,
+                                                    theta=tmp.theta)
+
+        self._draw_preview(tmp)
+
+    @staticmethod
+    def _read_srclist_table(srclist_path: Path) -> dict:
+        """Read key columns from an OM SWSRLI source list table."""
+        srclist_path = Path(srclist_path)
+        if not srclist_path.exists():
+            raise FileNotFoundError(f"SRCLIST not found: {srclist_path}")
+
+        with fits.open(str(srclist_path), memmap=False) as hdul:
+            tab = None
+            for hdu in hdul:
+                if getattr(hdu, "data", None) is None:
+                    continue
+                if getattr(hdu, "columns", None) is not None:
+                    tab = hdu.data
+                    break
+            if tab is None:
+                raise ValueError(f"No table HDU found in SRCLIST: {srclist_path.name}")
+
+            names = tab.columns.names
+            up = {n.upper(): n for n in names}
+
+            def get(name: str):
+                k = up.get(name.upper())
+                return np.asarray(tab[k]) if k else None
+
+            return {
+                "SRCNUM": get("SRCNUM"),
+                "RA_CORR": get("RA_CORR"),
+                "DEC_CORR": get("DEC_CORR"),
+                "RATE": get("RATE"),
+                "RATE_ERR": get("RATE_ERR"),
+                "CORR_RATE": get("CORR_RATE"),
+                "CORR_RATE_ERR": get("CORR_RATE_ERR"),
+                "BACKGROUND_RATE": get("BACKGROUND_RATE"),
+                "BKG_RATE_ERR": get("BKG_RATE_ERR"),
+                "QFLAG": get("QFLAG"),
+                "CFLAG": get("CFLAG"),
+                "EFLAG": get("EFLAG"),
+            }
+
+    def _safe_redraw_preserve_view(self, redraw_fn):
+        """Redraw without changing zoom/pan state or axes limits."""
+        ax = self.ax
+        xlim0 = ax.get_xlim()
+        ylim0 = ax.get_ylim()
+
+        # Disable toolbar interactive modes (zoom/pan) to avoid drag_zoom state issues
+        tb = getattr(getattr(self.fig, "canvas", None), "toolbar", None)
+        if tb is not None:
+            mode = getattr(tb, "mode", "")
+            if mode:
+                try:
+                    m = str(mode).lower()
+                    if "zoom" in m:
+                        tb.zoom()   # toggle off
+                    elif "pan" in m:
+                        tb.pan()    # toggle off
+                    else:
+                        tb.mode = ""
+                except Exception:
+                    pass
+
+        try:
+            redraw_fn()
+        finally:
+            ax.set_xlim(xlim0)
+            ax.set_ylim(ylim0)
+            ax.figure.canvas.draw_idle()
