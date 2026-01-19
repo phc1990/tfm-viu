@@ -477,8 +477,21 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     ui.ax.set_title(f"{target} | obs={observation_id} | {fits_name}")
 
     # pos1/pos2 markers (non-blocking)
+
+    # WCS (usar el que ya venga en HDUW si existe)
+    wcs = getattr(hduw, "wcs", None)
+    if wcs is None:
+        try:
+            from astropy.wcs import WCS
+            wcs = WCS(hduw.hdu.header)
+        except Exception:
+            wcs = None
+
+    # Debug útil (opcional)
+    print(f"[PHOT][DBG] ra1/dec1=({ra1},{dec1}) ra2/dec2=({ra2},{dec2}) wcs={'OK' if wcs is not None else 'None'}")
+
     try:
-        ui.add_markers(ra1=ra1, dec1=dec1, ra2=ra2, dec2=dec2, wcs=None)
+        ui.add_markers(ra1=ra1, dec1=dec1, ra2=ra2, dec2=dec2, wcs=wcs)
     except Exception:
         pass
 
