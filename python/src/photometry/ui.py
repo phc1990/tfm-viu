@@ -242,8 +242,12 @@ class UI:
         pos1=None,
         pos2=None,
         wcs=None,
+        *,
+        store_key: str = "_marker_artists",
+        clear_previous: bool = True,
         **style,
     ):
+
         """
         Pinta marcadores de fuentes sobre self.ax.
         Devuelve lista de artistas creados.
@@ -254,6 +258,14 @@ class UI:
             return []
 
         W = wcs or getattr(self, "wcs", None)
+        # En WCSAxes, forzar que (x,y) se interprete como pixeles.
+        pix_transform = None
+        try:
+            if hasattr(ax, "get_transform"):
+                pix_transform = ax.get_transform("pixel")
+        except Exception:
+            pix_transform = None
+
 
         # Estilo visible por defecto
         base_style = dict(
@@ -307,10 +319,18 @@ class UI:
             try:
                 sc = SkyCoord(float(ra) * u.deg, float(dec) * u.deg, frame="icrs")
                 x, y = W.world_to_pixel(sc)
-                return float(np.atleast_1d(x)[0]), float(np.atleast_1d(y)[0])
+                x = float(np.atleast_1d(x)[0])
+                y = float(np.atleast_1d(y)[0])
+
+                if not (np.isfinite(x) and np.isfinite(y)):
+                    print(f"[UI] WARN: RA/Dec→pix devolvió no finito: ra={ra} dec={dec} -> x={x} y={y}")
+                    return None
+
+                return x, y
             except Exception as e:
                 print(f"[UI] WARN: fallo RA/Dec→pix: {e}")
                 return None
+
 
         def _pt_to_xy(pt):
             """Devuelve (x,y) en píxel o None."""
@@ -382,20 +402,36 @@ class UI:
         # ---- 2) dibujado ----
         arts = []
 
-        # Limpia marcadores previos (evita stacking)
-        if not hasattr(self, "_marker_artists"):
-            self._marker_artists = []
-        for a in self._marker_artists:
-            try:
-                a.remove()
-            except Exception:
-                pass
-        self._marker_artists = []
+        # # Limpia marcadores previos (evita stacking)
+        # if not hasattr(self, "_marker_artists"):
+        #     self._marker_artists = []
+        # for a in self._marker_artists:
+        #     try:
+        #         a.remove()
+        #     except Exception:
+        #         pass
+        # self._marker_artists = []
+
+        # Limpia artistas previos SOLO de la "capa" indicada (evita stacking sin borrar otras capas)
+        if not hasattr(self, store_key):
+            setattr(self, store_key, [])
+        if clear_previous:
+            for a in getattr(self, store_key, []):
+                try:
+                    a.remove()
+                except Exception:
+                    pass
+            setattr(self, store_key, [])
+
 
         # Dibuja sources (si hay)
         if len(xs) > 0:
             xlim0 = ax.get_xlim()
-            ylim0 = ax.get_ylim()
+            ylim0 = ax.get_ylim()           
+            if pix_transform is not None and "transform" not in base_style:
+                base_style = dict(base_style)
+                base_style["transform"] = pix_transform
+            
             scat = ax.scatter(xs, ys, **base_style)
             arts.append(scat)
             ax.set_xlim(xlim0)
@@ -403,21 +439,67 @@ class UI:
 
 
         # Dibuja pos1/pos2 con estilo propio (si hay)
-        xy1 = _pt_to_xy(pos1)
-        if xy1 is not None:
-            x1, y1 = xy1
-            arts.append(ax.scatter([x1], [y1], **pos1_style))
+        # xy1 = _pt_to_xy(pos1)
+        # if xy1 is not None:
+        #     x1, y1 = xy1
+        #     arts.append(ax.scatter([x1], [y1], **pos1_style))
 
+        # xy2 = _pt_to_xy(pos2)
+        # if xy2 is not None:
+        #     x2, y2 = xy2
+        #     arts.append(ax.scatter([x2], [y2], **pos2_style))
+
+                # Dibuja pos1/pos2 con estilo propio (si hay)
+        xlim0 = ax.get_xlim()
+        ylim0 = ax.get_ylim()
+
+        xy1 = _pt_to_xy(pos1)
+        if xy1 is not None and np.isfinite(xy1[0]) and np.isfinite(xy1[1]):
+            x1, y1 = xy1
+            print(f"[UI][DBG] pos1 pix=({x1:.2f},{y1:.2f})")
+            print(f"[UI][DBG] xlim={ax.get_xlim()} ylim={ax.get_ylim()}")
+
+            # arts.append(ax.scatter([x1], [y1], **pos1_style))
+            s1 = dict(pos1_style)
+            if pix_transform is not None and "transform" not in s1:
+                s1["transform"] = pix_transform
+            arts.append(ax.scatter([x1], [y1], **s1))
+
+
+
+            ax.set_xlim(xlim0); ax.set_ylim(ylim0)
+        elif pos1 is not None:
+            print(f"[UI] WARN: pos1 no válido/convertible: {pos1} (WCS={'OK' if W is not None else 'None'})")
+
+        # xy2 = _pt_to_xy(pos2)
+        # if xy2 is not None and np.isfinite(xy2[0]) and np.isfinite(xy2[1]):
+        #     x2, y2 = xy2
+        #     print(f"[UI][DBG] pos2 pix=({x2:.2f},{y2:.2f})")
+        #     arts.append(ax.scatter([x2], [y2], **pos2_style))
+        #     ax.set_xlim(xlim0); ax.set_ylim(ylim0)
         xy2 = _pt_to_xy(pos2)
-        if xy2 is not None:
+        if xy2 is not None and np.isfinite(xy2[0]) and np.isfinite(xy2[1]):
             x2, y2 = xy2
-            arts.append(ax.scatter([x2], [y2], **pos2_style))
+            print(f"[UI][DBG] pos2 pix=({x2:.2f},{y2:.2f})")
+
+            s2 = dict(pos2_style)
+            if pix_transform is not None and "transform" not in s2:
+                s2["transform"] = pix_transform
+            arts.append(ax.scatter([x2], [y2], **s2))
+
+            ax.set_xlim(xlim0); ax.set_ylim(ylim0)
+        elif pos2 is not None:
+            print(f"[UI] WARN: pos2 no válido/convertible: {pos2} (WCS={'OK' if W is not None else 'None'})")
+
+        elif pos2 is not None:
+            print(f"[UI] WARN: pos2 no válido/convertible: {pos2} (WCS={'OK' if W is not None else 'None'})")
 
         if len(arts) == 0:
             print("[UI] NOTE: add_sources() no pintó nada (sin puntos válidos).")
             return []
 
-        self._marker_artists = arts
+        # self._marker_artists = arts
+        setattr(self, store_key, arts)
 
         try:
             self.update()
@@ -441,12 +523,23 @@ class UI:
                 W = extract_wcs_from_hduw(self.hduw)
             except Exception:
                 W = None
+        # En WCSAxes, fuerza que los (x,y) que pasamos a scatter sean píxeles.
+        pix_transform = None
+        try:
+            if hasattr(ax, "get_transform"):
+                pix_transform = ax.get_transform("pixel")
+        except Exception:
+            pix_transform = None
+        
+        self.add_sources(
+            pos1=pos1,
+            pos2=pos2,
+            wcs=W,
+            store_key="_marker_artists",
+            clear_previous=True,
+            **style,
+        )
 
-        self.add_sources(pos1=pos1, pos2=pos2, wcs=W, **style)
-
-    # def add_markers(self, *args, **kwargs):
-    #     """Backward-compatible alias for add_sources (used by other pipeline modules)."""
-    #     return self.add_sources(*args, **kwargs)
 
     def select_trail(self, selector):
         self._selector = selector
@@ -901,147 +994,6 @@ class UI:
         self.update()
 
 
-    # -------------------- SRCLIST overlay --------------------
-    # @staticmethod
-    # def _read_srclist_radec(srclist_path: Path) -> Tuple[np.ndarray, np.ndarray]:
-    #     """Read RA/Dec arrays (deg) from an OM SRCLIST-like FITS table.
-
-    #     Tries common column conventions (case-insensitive):
-    #       - RA / DEC
-    #       - RA_DEG / DEC_DEG
-    #       - RAJ2000 / DEJ2000
-    #     """
-    #     srclist_path = Path(srclist_path)
-    #     if not srclist_path.exists():
-    #         raise FileNotFoundError(f"SRCLIST not found: {srclist_path}")
-
-    #     with fits.open(str(srclist_path), memmap=False) as hdul:
-    #         tab = None
-    #         for hdu in hdul:
-    #             if getattr(hdu, "data", None) is None:
-    #                 continue
-    #             if getattr(hdu, "columns", None) is not None:
-    #                 tab = hdu.data
-    #                 break
-    #         if tab is None:
-    #             raise ValueError(f"No table HDU found in SRCLIST: {srclist_path.name}")
-
-    #         colnames = [c.upper() for c in tab.columns.names]
-
-    #         def _get_col(*cands: str):
-    #             for c in cands:
-    #                 cu = c.upper()
-    #                 if cu in colnames:
-    #                     return tab[tab.columns.names[colnames.index(cu)]]
-    #             return None
-
-    #         ra = _get_col("RA", "RA_DEG", "RAJ2000", "RA_OBJ")
-    #         dec = _get_col("DEC", "DEC_DEG", "DEJ2000", "DEC_OBJ")
-    #         if ra is None or dec is None:
-    #             raise KeyError(
-    #                 f"Could not find RA/DEC columns in {srclist_path.name}. "
-    #                 f"Available: {tab.columns.names}"
-    #             )
-
-    #         ra = np.asarray(ra, dtype=float)
-    #         dec = np.asarray(dec, dtype=float)
-    #         m = np.isfinite(ra) & np.isfinite(dec)
-    #         return ra[m], dec[m]
-
-    
-    # def add_srclist_overlay(
-    #     self,
-    #     srclist_path: Path,
-    #     *,
-    #     marker: str = ".",
-    #     s: float = 14,
-    #     alpha: float = 0.8,
-    #     color: str = "yellow",
-    #     zorder: int = 11,
-    # ) -> List:
-    #     """Overplot filtered SRCLIST sources as yellow points (pixel coords).
-
-    #     Uses XPOS/YPOS directly (no WCS needed).
-    #     Applies COI filter: (CORR_RATE - RATE)/RATE < 0.02 (and RATE>0).
-    #     Caches arrays for nearest-neighbour picking later.
-    #     """
-    #     try:
-    #         tab = self._read_srclist_table(Path(srclist_path))
-
-    #         x = tab.get("XPOS")
-    #         y = tab.get("YPOS")
-    #         rate = tab.get("RATE")
-    #         corr_rate = tab.get("CORR_RATE")
-
-    #         if x is None or y is None:
-    #             raise KeyError("SRCLIST table missing XPOS/YPOS columns")
-
-    #         x = np.asarray(x, dtype=float)
-    #         y = np.asarray(y, dtype=float)
-
-    #         sig = tab.get("SIGNIFICANCE")
-
-    #         mask = np.isfinite(x) & np.isfinite(y)
-
-    #         # Detection quality pre-filter
-    #         if sig is not None:
-    #             sig = np.asarray(sig, dtype=float)
-    #             mask &= np.isfinite(sig) & (sig > 10.0)   # adjust threshold (7–15) as needed
-
-    #         # COI filter
-    #         if rate is not None and corr_rate is not None:
-    #             rate = np.asarray(rate, dtype=float)
-    #             corr_rate = np.asarray(corr_rate, dtype=float)
-    #             with np.errstate(divide="ignore", invalid="ignore"):
-    #                 frac = (corr_rate - rate) / rate
-
-    #             mask_coi = (
-    #                 np.isfinite(frac) &
-    #                 np.isfinite(rate) &
-    #                 (rate > 0) &
-    #                 (np.abs(frac) < 0.02)
-    #             )
-
-    #             # apply COI only if enough sources remain
-    #             if np.count_nonzero(mask & mask_coi) >= 5:
-    #                 mask &= mask_coi
-    #             else:
-    #                 print("[UI] WARN: COI filter removed almost all sources; overlaying without COI filter.")
-
-
-    #     except Exception as e:
-    #         print(f"[UI] WARN: could not load SRCLIST overlay ({srclist_path}): {e}")
-    #         return []
-
-    #     # Cache for nearest-neighbour and later rate lookup
-    #     self._srclist_path = Path(srclist_path)
-    #     self._srclist_x = x[mask]
-    #     self._srclist_y = y[mask]
-
-    #     rate_all = tab.get("RATE")
-    #     rateerr_all = tab.get("RATE_ERR")
-    #     corrrate_all = tab.get("CORR_RATE")
-    #     srcnum_all = tab.get("SRCNUM")
-
-    #     self._srclist_rate = np.asarray(rate_all, dtype=float)[mask] if rate_all is not None else None
-    #     self._srclist_rate_err = np.asarray(rateerr_all, dtype=float)[mask] if rateerr_all is not None else None
-    #     self._srclist_corr_rate = np.asarray(corrrate_all, dtype=float)[mask] if corrrate_all is not None else None
-    #     self._srclist_srcnum = np.asarray(srcnum_all)[mask] if srcnum_all is not None else None
-    #     self._srclist_row_index = np.nonzero(mask)[0]
-
-
-    #     return self.add_sources(
-    #         sources={"xcentroid": self._srclist_x, "ycentroid": self._srclist_y},
-    #         marker=marker,
-    #         s=s,
-    #         facecolors=color,
-    #         edgecolors=color,
-    #         linewidths=0,
-    #         alpha=alpha,
-    #         zorder=zorder,
-    #     )
-
-
     def add_srclist_overlay(
         self,
         srclist_path: Path,
@@ -1163,6 +1115,8 @@ class UI:
         # Plot points in pixel coords; dict form avoids RA/Dec heuristics in add_sources
         return self.add_sources(
             sources={"xcentroid": self._srclist_x, "ycentroid": self._srclist_y},
+            store_key="_srclist_artists",      
+            clear_previous=True,               
             marker=marker,
             s=s,
             facecolors=color,
@@ -1171,6 +1125,7 @@ class UI:
             alpha=alpha,
             zorder=zorder,
         )
+
 
 
     def _nearest_srclist(self, x: float, y: float, max_dist_pix: float = 8.0):
