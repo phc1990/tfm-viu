@@ -22,6 +22,37 @@ DETECTION_VALS = ('Y', 'D')
 NON_DETECTION_VALS = ('N',)
 
 
+# def read_csv(
+#     filepath: str,
+#     raise_file_not_found: bool = False,
+# ) -> tuple[Sequence[str], list[dict[str, Any]]]:
+#     """
+#     Reads a CSV file where values may be separated by ',' or ';'.
+#     Strips leading/trailing double quotes from each value.
+#     """
+#     headers: Sequence[str] = []
+#     rows = []
+
+#     try: 
+#         with open(filepath, newline='', encoding='utf-8') as f:
+#             for i, line in enumerate(f):
+#                 # Normalize separators by replacing commas with semicolons
+#                 line = line.replace(',', ';')
+#                 # Split by semicolon and strip quotes/spaces
+#                 values = [v.strip().strip('"') for v in line.split(';')]
+
+#                 if i == 0:
+#                     headers = values
+#                 else:
+#                     rows.append({header: values[j] if j < len(values) else '' for j, header in enumerate(headers)})
+
+#     except FileNotFoundError as e:
+#         if raise_file_not_found:
+#             raise e
+
+#     return headers, rows
+
+
 def read_csv(
     filepath: str,
     raise_file_not_found: bool = False,
@@ -29,22 +60,44 @@ def read_csv(
     """
     Reads a CSV file where values may be separated by ',' or ';'.
     Strips leading/trailing double quotes from each value.
+
+    Enhancements:
+    - Skips leading comment lines starting with '#'
+    - Skips blank lines before the header
+    - Uses the first non-comment, non-blank line as the header
     """
     headers: Sequence[str] = []
-    rows = []
+    rows: list[dict[str, Any]] = []
 
-    try: 
-        with open(filepath, newline='', encoding='utf-8') as f:
-            for i, line in enumerate(f):
+    try:
+        with open(filepath, newline="", encoding="utf-8") as f:
+            header_found = False
+
+            for line in f:
+                raw = line.strip()
+
+                # Skip blank lines
+                if not raw:
+                    continue
+
+                # Skip comment lines (allow leading whitespace before '#')
+                if raw.lstrip().startswith("#"):
+                    continue
+
                 # Normalize separators by replacing commas with semicolons
-                line = line.replace(',', ';')
+                normalized = line.replace(",", ";")
                 # Split by semicolon and strip quotes/spaces
-                values = [v.strip().strip('"') for v in line.split(';')]
+                values = [v.strip().strip('"') for v in normalized.split(";")]
 
-                if i == 0:
+                if not header_found:
                     headers = values
-                else:
-                    rows.append({header: values[j] if j < len(values) else '' for j, header in enumerate(headers)})
+                    header_found = True
+                    continue
+
+                # Data row
+                rows.append(
+                    {header: values[j] if j < len(values) else "" for j, header in enumerate(headers)}
+                )
 
     except FileNotFoundError as e:
         if raise_file_not_found:
