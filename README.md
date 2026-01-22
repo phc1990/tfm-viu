@@ -13,6 +13,15 @@ The repository presents the following layout:
     /temp               files in this directory will be ignored by Git
 ```
 
+## Conda
+
+There is a Conda environment ready to be used:
+
+```
+conda env create -f environment.yml
+conda activate tfm-viu
+```
+
 ## `/python`
 
 Written in [Python3](https://www.python.org/downloads/), the main functionailty of this module is to assist the user with by running **(semi)automated observation screening process**:

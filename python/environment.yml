@@ -1,0 +1,61 @@
+name: tfm-viu
+channels:
+  - conda-forge
+dependencies:
+  # --- core ---
+  - python=3.11
+  - pip
+
+  # --- scientific stack ---
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - astropy
+  - astroquery
+  - photutils
+  - regions
+  - gwcs
+  - pyerfa
+
+  # --- image / array processing ---
+  - scikit-image
+  - imageio
+  - pillow
+  - tifffile
+  - imagecodecs
+  - pywavelets
+
+  # --- geospatial ---
+  - rasterio
+  - shapely
+  - pyproj
+  - geos
+  - proj
+
+  # --- I/O & formats ---
+  - h5py
+  - hdf5
+  - pyarrow
+  - fsspec
+  - s3fs
+  - requests
+  - pyyaml
+
+  # --- performance / utils ---
+  - bottleneck
+  - tqdm
+  - cloudpickle
+  - toolz
+  - psutil
+
+  # --- interactive / notebooks ---
+  - ipython
+  - ipykernel
+  - ipywidgets
+  - jupyterlab_widgets
+  - matplotlib-inline
+
+  # --- GUI support (important on macOS) ---
+  - tk
+  - qt-main
