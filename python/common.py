@@ -134,20 +134,25 @@ def extract_row_value(row: dict[str, Any], columns: Union[str, Sequence[str]]) -
 
 
 def extract_matching_rows(
-    filepath: str,
+    filepath_or_rows: Union[str, list[dict[str, Any]]],
     columns: Union[str, Sequence[str]],
     value: str,
 ) -> list[dict[str, Any]]:
-    headers, csv_rows = read_csv(filepath=filepath)
+    csv_rows: list[dict[str, Any]]
+    
+    if isinstance(filepath_or_rows, str):
+        headers, csv_rows = read_csv(filepath=filepath_or_rows)
 
-    if len(csv_rows) == 0:
-        return []
+        if len(csv_rows) == 0:
+            return []
 
-    # Check that at least a column is present
-    if not any(column in headers for column in columns):
-        raise ValueError(
-            f"None of the columns {columns} found in CSV headers {headers}."
-        )
+        # Check that at least a column is present
+        if not any(column in headers for column in columns):
+            raise ValueError(
+                f"None of the columns {columns} found in CSV headers {headers}."
+            )
+    else:
+        csv_rows = filepath_or_rows
     
     matching_rows: list[dict] = []
     try:
