@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-from common import OBS_ID_COLS, FILTER_COLS, DECISION_COLS, FITS_FILE_COLS, DETECTION_VALS
+from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, DECISION_COLS, FITS_FILE_COLS, DETECTION_VALS
 from common import read_csv, extract_row_value, extract_matching_rows, find_fits_files 
 from action_download import action_download
 from action_screening import action_screening
@@ -53,10 +53,23 @@ def _find_next_action(
             print(f"No FITS files found for Observation {observation_id}, starting download...")
             return ("Download", input_row)
 
+        # Filter by observation id
         matching_screening_rows: list[dict] = extract_matching_rows(
-            filepath=screening_filepath,
+            filepath_or_rows=screening_filepath,
             columns=OBS_ID_COLS,
             value=observation_id
+        )
+
+        target_name: str = extract_row_value(
+            row=input_row,
+            columns=TARGET_COLS,
+        )
+
+        # Filter by target name
+        matching_screening_rows = extract_matching_rows(
+            filepath_or_rows=matching_screening_rows,
+            columns=TARGET_COLS,
+            value=target_name,
         )
 
         # If there are no screening rows, it needs to be screened
@@ -84,7 +97,7 @@ def _find_next_action(
             )
 
             matching_photometry_rows: list[dict] = extract_matching_rows(
-                filepath=photometry_filepath,
+                filepath_or_rows=photometry_filepath,
                 columns=FITS_FILE_COLS,
                 value=fits_file,
             )
