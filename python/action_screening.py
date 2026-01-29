@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence, List
 
 
-from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, DECISION_COLS, POS1_DEC_COLS, POS1_RA_COLS, POS2_DEC_COLS, POS2_RA_COLS, FITS_FILE_COLS, DETECTION_VALS, NON_DETECTION_VALS
+from common import OBS_ID_COLS, TARGET_COLS, FILTER_COLS, DECISION_COLS, POS1_DEC_COLS, POS1_RA_COLS, POS2_DEC_COLS, POS2_RA_COLS, FITS_FILE_COLS, DETECTION_VALS, NON_DETECTION_VALS, V_MAG_1_COL, V_MAG_1_CORRECTED_COL, MLIM_OBS_COL
 from common import extract_row_value, append_row, find_fits_files, find_fits_files_without_srclist, close_subprocess, request_user_input 
 
 
@@ -103,6 +103,11 @@ def action_screening(
     dec1: float = float(extract_row_value(input_row, POS1_DEC_COLS))
     ra2: float = float(extract_row_value(input_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(input_row, POS2_DEC_COLS))
+    v_mag_1: float = float(extract_row_value(input_row, V_MAG_1_COL))
+    v_mag_1_corrected: float = float(extract_row_value(input_row, V_MAG_1_CORRECTED_COL))
+    mlim_obs: float = float(extract_row_value(input_row, MLIM_OBS_COL))
+
+
 
     fits_paths: list[Path] = find_fits_files_without_srclist(
         folder=config['INPUT']['DOWNLOAD_DIRECTORY'],

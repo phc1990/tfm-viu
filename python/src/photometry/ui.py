@@ -1059,7 +1059,7 @@ class UI:
                 if np.count_nonzero(mask & mask_coi) >= min_points_after_coi:
                     mask &= mask_coi
                 else:
-                    print("[UI] WARN: COI filter removed almost all sources; overlaying without COI filter.")
+                    print(f"[UI] WARN: COI filter removed almost all sources; overlaying without COI filter for file ({srclist_path})")
 
             # Need WCS to plot correctly over FSIMAG
             W = wcs or getattr(self, "wcs", None)

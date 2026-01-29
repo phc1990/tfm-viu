@@ -16,6 +16,9 @@ POS1_DEC_COLS = ('position_1_dec', 'dec_deg_1')
 POS2_RA_COLS  = ('position_2_ra', 'ra_deg_2')
 POS2_DEC_COLS = ('position_2_dec', 'dec_deg_2')
 FITS_FILE_COLS = ('FITS_FILE', 'fits_name')
+V_MAG_1_COL    = ('v_mag_1',)
+V_MAG_1_CORRECTED_COL = ('v_mag_1_corrected',)
+MLIM_OBS_COL    = ('mlim_obs',)
 
 # Values
 DETECTION_VALS = ('Y', 'D')
@@ -157,7 +160,7 @@ def extract_matching_rows(
     matching_rows: list[dict] = []
     try:
         for csv_row in csv_rows:
-            if any(csv_row.get(column) == value for column in columns if column in headers):
+            if any(csv_row.get(c) == value for c in columns):
                 matching_rows.append(csv_row)
 
     except FileNotFoundError:
@@ -188,7 +191,7 @@ def append_row(filepath: str, row: dict[str, Any]) -> None:
     with open(filepath, newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         header = next(reader)  # first row is header
-
+    
     # Ensure provided dict doesn’t contain unknown fields
     unknown = set(row.keys()) - set(header)
     if unknown:

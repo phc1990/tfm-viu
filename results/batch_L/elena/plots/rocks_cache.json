@@ -1,0 +1,82 @@
+{
+  "Aaltje": {
+    "_status": "ok",
+    "diameter_km": 37.818,
+    "pv": 0.1689,
+    "rocks_name": "Aaltje",
+    "rocks_number": 677,
+    "taxonomy_class": "S"
+  },
+  "Ada": {
+    "_status": "ok",
+    "diameter_km": 35.351,
+    "pv": 0.1388,
+    "rocks_name": "Ada",
+    "rocks_number": 523,
+    "taxonomy_class": "M"
+  },
+  "Barbara": {
+    "_status": "ok",
+    "diameter_km": 46.3,
+    "pv": 0.1853,
+    "rocks_name": "Barbara",
+    "rocks_number": 234,
+    "taxonomy_class": "L"
+  },
+  "Brouwer": {
+    "_status": "ok",
+    "diameter_km": 61.933,
+    "pv": 0.0478,
+    "rocks_name": "Brouwer",
+    "rocks_number": 1746,
+    "taxonomy_class": "D"
+  },
+  "Deflotte": {
+    "_status": "ok",
+    "diameter_km": 47.966,
+    "pv": 0.0351,
+    "rocks_name": "Deflotte",
+    "rocks_number": 1295,
+    "taxonomy_class": "C"
+  },
+  "Hilaritas": {
+    "_status": "ok",
+    "diameter_km": 27.222,
+    "pv": 0.0811,
+    "rocks_name": "Hilaritas",
+    "rocks_number": 996,
+    "taxonomy_class": "B"
+  },
+  "Solvejg": {
+    "_status": "ok",
+    "diameter_km": 33.748,
+    "pv": 0.0852,
+    "rocks_name": "Solvejg",
+    "rocks_number": 1331,
+    "taxonomy_class": "C"
+  },
+  "Tampere": {
+    "_status": "ok",
+    "diameter_km": 16.243,
+    "pv": 0.1729,
+    "rocks_name": "Tampere",
+    "rocks_number": 1497,
+    "taxonomy_class": "X"
+  },
+  "Transvaalia": {
+    "_status": "ok",
+    "diameter_km": 29.186,
+    "pv": 0.1998,
+    "rocks_name": "Transvaalia",
+    "rocks_number": 715,
+    "taxonomy_class": "S"
+  },
+  "Wells": {
+    "_status": "ok",
+    "diameter_km": 43.88,
+    "pv": 0.0312,
+    "rocks_name": "Wells",
+    "rocks_number": 1721,
+    "taxonomy_class": "B"
+  }
+}

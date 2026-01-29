@@ -26,6 +26,9 @@ from common import (
     POS1_RA_COLS,
     POS2_DEC_COLS,
     POS2_RA_COLS,
+    V_MAG_1_COL,
+    V_MAG_1_CORRECTED_COL,
+    MLIM_OBS_COL,
     extract_row_value,
     append_row,
 )
@@ -236,6 +239,10 @@ def _build_csv_row(
     fits_name: str,
     result: Optional[PhotometryResult],
     selector: Optional[TrailSelector],
+    v_mag_1: Optional[float] = None,
+    v_mag_1_corrected: Optional[float] = None,   
+    mlim_obs: Optional[float] = None,   
+
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "target_name": target_name,
@@ -266,6 +273,11 @@ def _build_csv_row(
         "apcorr_mag": None,
         "mag_ab_apcorr": None,
         "mag_ab_apcorr_err": None,
+
+        #A&A 2022 Catalogue
+        "v_mag_1": v_mag_1,
+        "v_mag_1_corrected": v_mag_1_corrected,
+        "mlim_obs": mlim_obs,
     }
 
     if result is None:
@@ -441,6 +453,11 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     ra2: float = float(extract_row_value(screening_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(screening_row, POS2_DEC_COLS))
 
+    v_mag_1: float = float(extract_row_value(screening_row, V_MAG_1_COL))
+    v_mag_1_corrected: float = float(extract_row_value(screening_row, V_MAG_1_CORRECTED_COL))
+    mlim_obs: float = float(extract_row_value(screening_row, MLIM_OBS_COL))
+
+
     fits_name: str = extract_row_value(screening_row, FITS_FILE_COLS)
     fits_path = Path(config["INPUT"]["DOWNLOAD_DIRECTORY"]) / observation_id / filt / fits_name
     if not fits_path.exists():
@@ -530,7 +547,7 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         ui.add_srclist_overlay(srclist_path)
 
 
-    selector = TrailSelector(height=5.0, semi_out=5.0, finalize_on_click=False)
+    selector = TrailSelector(height=13.0, semi_out=6.0, finalize_on_click=False)
 
     try:
         sel = ui.select_trail(selector)
@@ -552,6 +569,9 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
                 fits_name=fits_name,
                 result=None,
                 selector=selector,
+                v_mag_1 = v_mag_1,
+                v_mag_1_corrected = v_mag_1_corrected,
+                mlim_obs = mlim_obs,
             ).keys()
         ),
     )
@@ -566,6 +586,9 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
             fits_name=fits_name,
             result=None,
             selector=selector,
+            v_mag_1 = v_mag_1,
+            v_mag_1_corrected = v_mag_1_corrected,
+            mlim_obs = mlim_obs,
         )
         append_row(filepath=phot_csv, row=row)
         return
@@ -618,6 +641,9 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         fits_name=fits_name,
         result=res,
         selector=selector,
+        v_mag_1 = v_mag_1,
+        v_mag_1_corrected = v_mag_1_corrected,
+        mlim_obs = mlim_obs,
     )
 
     # derive actual geometry from the final apertures

@@ -124,7 +124,7 @@ class HttpCrawler(Crawler):
                 temp_file.seek(0, os.SEEK_END)
                 size = temp_file.tell()
                 if size == 0:
-                    print(f"[XSA] WARN: empty download (obs={observation.id} filter={filter}); skipping.")
+                    print(f"[XSA] WARN: empty download (obs={observation_id} filter={filter}); skipping.")
                     continue
 
                 # 2) intentar abrir como tar, y si falla, log de diagnóstico               
@@ -149,7 +149,7 @@ class HttpCrawler(Crawler):
                 except tarfile.ReadError:
                     temp_file.seek(0)
                     head = temp_file.read(300)
-                    print(f"[XSA] WARN: payload is not a tar archive (obs={observation.id} filter={filter}). "
+                    print(f"[XSA] WARN: payload is not a tar archive (obs={observation_id} filter={filter}). "
                         f"First bytes: {head!r}")
                     continue    
                                     
