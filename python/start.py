@@ -15,6 +15,8 @@ from common import read_csv, extract_row_value, extract_matching_rows, find_fits
 from action_download import action_download
 from action_screening import action_screening
 from action_photometry import action_photometry
+from action_plots import action_plots
+
 
 # Make XQuartz available (no XPA required in this build)
 os.environ.setdefault('DISPLAY', ':0')
@@ -114,44 +116,88 @@ def _find_next_action(
     return None, None
 
 
-def main(
-    config: ConfigParser
-) -> None:
+# def main(
+#     config: ConfigParser
+# ) -> None:
+#     while True:
+#         next_action, details = _find_next_action(
+#             input_filepath=config['INPUT']['FILEPATH'],
+#             download_directory=config['INPUT']['DOWNLOAD_DIRECTORY'],
+#             screening_filepath=config['SCREENING']['FILEPATH'],
+#             photometry_filepath=config['PHOTOMETRY']['FILEPATH'],
+#             skip_screening=config.getboolean('SCREENING', 'SKIP'),
+#             skip_photometry=config.getboolean('PHOTOMETRY', 'SKIP'),
+#         )
+
+#         # No next actions, we're done
+#         if next_action is None:
+#             break
+
+#         elif next_action == 'Download':
+#             action_download(
+#                 config=config,
+#                 input_row=details,
+#             )
+
+#         elif next_action == 'Screening':
+#             action_screening(
+#                 config=config,
+#                 input_row=details,
+#             )
+
+#         elif next_action == 'Photometry':
+#             action_photometry(
+#                 config=config,
+#                 screening_row=details,
+#             )
+
+#         else:
+#             raise RuntimeError(f"Unrecognized action: {next_action}")
+
+def main(config: ConfigParser) -> None:
+    skip_screening = config.getboolean('SCREENING', 'SKIP', fallback=False)
+    skip_photometry = config.getboolean('PHOTOMETRY', 'SKIP', fallback=False)
+
+    # Por defecto PLOTS está en TRUE (no queremos plots en cada iteración)
+    skip_plots = config.getboolean('PLOTS', 'SKIP', fallback=True)
+
+    # Modo standalone: si sólo quieres plots, no entres en el bucle de acciones
+    # (evita que se dispare Download si faltan FITS).
+    if (not skip_plots) and skip_screening and skip_photometry:
+        print("[START] Running PLOTS standalone (SCREENING=SKIP, PHOTOMETRY=SKIP).")
+        action_plots(config)
+        return
+
+    # Pipeline normal
     while True:
         next_action, details = _find_next_action(
             input_filepath=config['INPUT']['FILEPATH'],
             download_directory=config['INPUT']['DOWNLOAD_DIRECTORY'],
             screening_filepath=config['SCREENING']['FILEPATH'],
             photometry_filepath=config['PHOTOMETRY']['FILEPATH'],
-            skip_screening=config.getboolean('SCREENING', 'SKIP'),
-            skip_photometry=config.getboolean('PHOTOMETRY', 'SKIP'),
+            skip_screening=skip_screening,
+            skip_photometry=skip_photometry,
         )
 
-        # No next actions, we're done
         if next_action is None:
             break
 
-        elif next_action == 'Download':
-            action_download(
-                config=config,
-                input_row=details,
-            )
+        if next_action == 'Download':
+            action_download(config=config, input_row=details)
 
         elif next_action == 'Screening':
-            action_screening(
-                config=config,
-                input_row=details,
-            )
+            action_screening(config=config, input_row=details)
 
         elif next_action == 'Photometry':
-            action_photometry(
-                config=config,
-                screening_row=details,
-            )
+            action_photometry(config=config, screening_row=details)
 
         else:
             raise RuntimeError(f"Unrecognized action: {next_action}")
 
+    # Al terminar el pipeline, si PLOTS está activado, genera el plot una vez
+    if not skip_plots:
+        print("[START] Pipeline finished; generating plots.")
+        action_plots(config)
 
 def run_photometry_if_needed(decision: str,
                              fits_path: Path,
