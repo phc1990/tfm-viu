@@ -1,4 +1,12 @@
 {
+  "1996 UT": {
+    "_status": "ok",
+    "diameter_km": 15.161,
+    "pv": 0.0714,
+    "rocks_name": "1996 UT",
+    "rocks_number": 8415,
+    "taxonomy_class": "B"
+  },
   "Aaltje": {
     "_status": "ok",
     "diameter_km": 37.818,
@@ -14,6 +22,14 @@
     "rocks_name": "Ada",
     "rocks_number": 523,
     "taxonomy_class": "M"
+  },
+  "Asteropaios": {
+    "_status": "ok",
+    "diameter_km": 56.899,
+    "pv": 0.0488,
+    "rocks_name": "Asteropaios",
+    "rocks_number": 4805,
+    "taxonomy_class": "K"
   },
   "Barbara": {
     "_status": "ok",
@@ -31,6 +47,22 @@
     "rocks_number": 1746,
     "taxonomy_class": "D"
   },
+  "Chesneau": {
+    "_status": "ok",
+    "diameter_km": 5.35,
+    "pv": 0.2847,
+    "rocks_name": "Chesneau",
+    "rocks_number": 6065,
+    "taxonomy_class": ""
+  },
+  "Chrisclark": {
+    "_status": "ok",
+    "diameter_km": 19.089,
+    "pv": 0.0494,
+    "rocks_name": "Chrisclark",
+    "rocks_number": 6723,
+    "taxonomy_class": "C"
+  },
   "Deflotte": {
     "_status": "ok",
     "diameter_km": 47.966,
@@ -39,6 +71,38 @@
     "rocks_number": 1295,
     "taxonomy_class": "C"
   },
+  "Dowling": {
+    "_status": "ok",
+    "diameter_km": 6.077,
+    "pv": 0.0505,
+    "rocks_name": "Dowling",
+    "rocks_number": 3529,
+    "taxonomy_class": "X"
+  },
+  "Fredtreasure": {
+    "_status": "ok",
+    "diameter_km": 15.685,
+    "pv": 0.0802,
+    "rocks_name": "Fredtreasure",
+    "rocks_number": 13859,
+    "taxonomy_class": "D"
+  },
+  "Guericke": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "Guericke",
+    "rocks_number": 11537,
+    "taxonomy_class": ""
+  },
+  "Gurzhij": {
+    "_status": "ok",
+    "diameter_km": 4.099,
+    "pv": 0.2569,
+    "rocks_name": "Gurzhij",
+    "rocks_number": 6679,
+    "taxonomy_class": "V"
+  },
   "Hilaritas": {
     "_status": "ok",
     "diameter_km": 27.222,
@@ -46,6 +110,78 @@
     "rocks_name": "Hilaritas",
     "rocks_number": 996,
     "taxonomy_class": "B"
+  },
+  "Ivanka": {
+    "_status": "ok",
+    "diameter_km": 9.7,
+    "pv": 0.1605,
+    "rocks_name": "Ivanka",
+    "rocks_number": 8573,
+    "taxonomy_class": "C"
+  },
+  "Jepejacobsen": {
+    "_status": "ok",
+    "diameter_km": 15.781,
+    "pv": 0.1114,
+    "rocks_name": "Jepejacobsen",
+    "rocks_number": 12352,
+    "taxonomy_class": "X"
+  },
+  "Kaneko": {
+    "_status": "ok",
+    "diameter_km": 19.006,
+    "pv": 0.1184,
+    "rocks_name": "Kaneko",
+    "rocks_number": 4717,
+    "taxonomy_class": "K"
+  },
+  "Landi": {
+    "_status": "ok",
+    "diameter_km": 13.353,
+    "pv": 0.1923,
+    "rocks_name": "Landi",
+    "rocks_number": 2381,
+    "taxonomy_class": "S"
+  },
+  "Lucubratio": {
+    "_status": "ok",
+    "diameter_km": 21.9,
+    "pv": 0.0547,
+    "rocks_name": "Lucubratio",
+    "rocks_number": 3021,
+    "taxonomy_class": ""
+  },
+  "Mucha": {
+    "_status": "ok",
+    "diameter_km": 9.273,
+    "pv": 0.2402,
+    "rocks_name": "Mucha",
+    "rocks_number": 5122,
+    "taxonomy_class": "S"
+  },
+  "Pesonen": {
+    "_status": "ok",
+    "diameter_km": 10.73,
+    "pv": 0.0451,
+    "rocks_name": "Pesonen",
+    "rocks_number": 11263,
+    "taxonomy_class": "C"
+  },
+  "Pobeda": {
+    "_status": "ok",
+    "diameter_km": 16.543,
+    "pv": 0.1827,
+    "rocks_name": "Pobeda",
+    "rocks_number": 1908,
+    "taxonomy_class": "S"
+  },
+  "Richardbaum": {
+    "_status": "ok",
+    "diameter_km": 3.8,
+    "pv": 0.2556,
+    "rocks_name": "Richardbaum",
+    "rocks_number": 7966,
+    "taxonomy_class": "V"
   },
   "Solvejg": {
     "_status": "ok",
@@ -69,6 +205,14 @@
     "pv": 0.1998,
     "rocks_name": "Transvaalia",
     "rocks_number": 715,
+    "taxonomy_class": "S"
+  },
+  "Weisell": {
+    "_status": "ok",
+    "diameter_km": 18.154,
+    "pv": 0.1808,
+    "rocks_name": "Weisell",
+    "rocks_number": 2802,
     "taxonomy_class": "S"
   },
   "Wells": {
