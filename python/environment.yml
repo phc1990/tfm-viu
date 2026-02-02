@@ -59,3 +59,7 @@ dependencies:
   # --- GUI support (important on macOS) ---
   - tk
   - qt-main
+
+  # --- pip-only packages ---
+  - pip:
+      - rocks==1.9.15
