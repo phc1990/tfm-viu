@@ -61,5 +61,5 @@ dependencies:
   - qt-main
 
   # --- pip-only packages ---
-  - pip:
-      - rocks==1.9.15
+  # - pip:
+  #     - rocks==1.9.15
