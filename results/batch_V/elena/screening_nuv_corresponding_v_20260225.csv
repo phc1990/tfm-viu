@@ -1,0 +1,4 @@
+#WITH base AS (SELECT DISTINCT observation_id, sso_name FROM sso.screening_nuv_initial WHERE decision IN ('Y','D')) SELECT x.observation_id, x.sso_name, x.ra_deg_1, x.dec_deg_1, x.ra_deg_2, x.dec_deg_2, x."filter", x.xmatch_type, x.v_mag_1, x.v_mag_1_corrected, x.mlim_obs FROM base b JOIN sso.xmm_om_unique x ON x.observation_id = b.observation_id AND x.sso_name = b.sso_name WHERE x."filter" = 'V';
+"observation_id";"sso_name";"ra_deg_1";"dec_deg_1";"ra_deg_2";"dec_deg_2";"filter";"xmatch_type";"v_mag_1";"v_mag_1_corrected";"mlim_obs"
+"0303670101";Seeligeria;215.06903;6.657949;215.11058;6.594688;V;2;15.63;15.6774;19.47694
+"0793183801";Pluto;290.5976;-21.208502;290.59418;-21.210587;V;2;14.66;14.7074;19.166199
