@@ -16,6 +16,8 @@ from action_download import action_download
 from action_screening import action_screening
 from action_photometry import action_photometry
 from action_plots import action_plots
+from action_phot_c2 import action_phot_c2
+
 
 
 # Make XQuartz available (no XPA required in this build)
@@ -167,6 +169,14 @@ def main(config: ConfigParser) -> None:
         print("[START] Running PLOTS standalone (SCREENING=SKIP, PHOTOMETRY=SKIP).")
         action_plots(config)
         return
+    
+    # C2 standalone: acción "once-only" para calcular factores C2 por filtro
+    skip_c2 = config.getboolean('C2', 'SKIP', fallback=True)
+    if (not skip_c2) and skip_screening and skip_photometry:
+        print("[START] Running C2 standalone (SCREENING=SKIP, PHOTOMETRY=SKIP).")
+        action_phot_c2(config)
+        return
+
 
     # Pipeline normal
     while True:

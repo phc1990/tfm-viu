@@ -68,6 +68,27 @@ class PhotometryResult:
     zp_keyword: Optional[str] = None
     zp_source_file: Optional[str] = None
     zp_source_kind: Optional[str] = None
+@dataclass
+class RatePhotometryResult:
+    # Net count-rate (ct/s) and uncertainty
+    net_rate: float
+    net_rate_err: Optional[float]
+
+    # Total in aperture (source+background), in native units (counts or counts/s)
+    aper_sum: float
+
+    # Background stats per pixel, in native units (counts/pix or (counts/s)/pix)
+    bkg_per_pix: float
+    bkg_rms_per_pix: float
+
+    # Effective areas (weights sum)
+    A_ap_eff: float
+    A_bg_eff: Optional[float]
+
+    # Unit bookkeeping
+    unit_kind: str                # "rate" or "counts"
+    exptime: Optional[float]      # seconds if counts, else None
+    bunit_str: str
 
 
 class PhotTable:
@@ -482,47 +503,316 @@ class PhotTable:
             zp_source_file=self._zp_prov["file"],
             zp_source_kind=self._zp_prov["kind"],
         )
+    
+    def perform_trail_rate_photometry(
+        self,
+        rectangular_aperture: RectangularAperture,
+        rectangular_annulus: Optional[RectangularAnnulus] = None,
+        debug: bool = False,
+    ) -> RatePhotometryResult:
+        """
+        Rate-only trail photometry:
+        - NO requires zero point
+        - Works for RATE images (counts/s/pix) and COUNTS images (counts/pix) using EXPTIME
+        - Returns net count-rate in ct/s
+        """
+
+        data = np.asarray(self.hduw.data, dtype=float)
+        if data.ndim != 2:
+            raise ValueError("HDUW data must be a 2-D image.")
+
+        unit_kind, bunit_str = self._data_unit_kind_and_bunit()
+
+        # Aperture sum (exact) and effective areas
+        phot_ap = aperture_photometry(data, rectangular_aperture, method="exact")
+        Cap = float(phot_ap["aperture_sum"][0])  # in native units: counts OR counts/s
+
+        A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
+        A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+
+        bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)  # per-pixel, native units
+
+        # ---------------- RATE images (counts/s/pix) ----------------
+        if unit_kind == "rate":
+            net_rate = Cap - bkg_mean * A_ap_eff  # ct/s
+
+            # uncertainty in rate units (same approach as your RATE branch)
+            var_bkg_rate = np.nan
+            if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+                var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+
+            # try estimating t_eff as in your code; if not available, leave source term out
+            t_eff = None
+            if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
+                t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
+
+            var_src_rate = np.nan
+            if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
+                var_src_rate = Cap / t_eff
+
+            terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
+            net_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else None
+
+            if debug:
+                print("[TrailRatePhotometry DEBUG — RATE image]")
+                print(f"  BUNIT               = {bunit_str}")
+                print(f"  Cap (aperture_sum)  = {Cap:.6f} (counts/s)")
+                print(f"  bkg_mean            = {bkg_mean:.6e} (counts/s/pix)")
+                print(f"  bkg_rms             = {bkg_std:.6e} (counts/s/pix)")
+                print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
+                print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+                print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+
+            return RatePhotometryResult(
+                net_rate=float(net_rate),
+                net_rate_err=net_rate_err,
+                aper_sum=Cap,
+                bkg_per_pix=bkg_mean,
+                bkg_rms_per_pix=bkg_std,
+                A_ap_eff=A_ap_eff,
+                A_bg_eff=A_bg_eff,
+                unit_kind="rate",
+                exptime=None,
+                bunit_str=bunit_str,
+            )
+
+        # ---------------- COUNTS images (counts/pix) ----------------
+        exptime = self._exptime_from()
+        if exptime is None or not np.isfinite(exptime) or exptime <= 0:
+            raise ValueError("Invalid or missing EXPTIME for COUNTS image.")
+
+        # net counts in aperture:
+        net_counts = Cap - bkg_mean * A_ap_eff
+        net_rate = net_counts / exptime
+
+        # uncertainties in counts domain (your COUNTS branch)
+        var_bkg_counts = np.nan
+        if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+            var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+
+        var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
+
+        terms_counts = [v for v in (var_bkg_counts, var_src_counts) if np.isfinite(v)]
+        net_counts_err = float(np.sqrt(max(sum(terms_counts), 0.0))) if terms_counts else None
+        net_rate_err = (net_counts_err / exptime) if (net_counts_err is not None) else None
+
+        if debug:
+            print("[TrailRatePhotometry DEBUG — COUNTS image]")
+            print(f"  BUNIT               = {bunit_str}")
+            print(f"  Cap (aperture_sum)  = {Cap:.3f} (counts)")
+            print(f"  bkg_mean            = {bkg_mean:.6e} (counts/pix)")
+            print(f"  bkg_rms             = {bkg_std:.6e} (counts/pix)")
+            print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
+            print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+            print(f"  EXPTIME             = {exptime:.3f} (s)")
+            print(f"  net_counts          = {net_counts:.3f} (counts)")
+            print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+
+        return RatePhotometryResult(
+            net_rate=float(net_rate),
+            net_rate_err=net_rate_err,
+            aper_sum=Cap,
+            bkg_per_pix=bkg_mean,
+            bkg_rms_per_pix=bkg_std,
+            A_ap_eff=A_ap_eff,
+            A_bg_eff=A_bg_eff,
+            unit_kind="counts",
+            exptime=float(exptime),
+            bunit_str=bunit_str,
+        )
 
 
-def apply_apcorr(result: PhotometryResult, apcorr_mag: float, apcorr_mag_err: float = 0.0) -> PhotometryResult:
-    """Populate apcorr_mag and corrected magnitude fields on an existing PhotometryResult.
+# # --- phot.py (añadir imports si no están) ---
+# from __future__ import annotations
+# from dataclasses import dataclass
+# from typing import Optional, Tuple, Dict, Any, List
+# import math
+# import numpy as np
 
-    This keeps result.mag_ab and result.mag_err untouched, and provides:
-      - result.apcorr_mag
-      - result.mag_ab_apcorr = result.mag_ab + apcorr_mag
-      - result.mag_ab_apcorr_err = hypot(result.mag_err, apcorr_mag_err)
+# from astropy.wcs import WCS
+# from photutils.aperture import RectangularAperture, RectangularAnnulus
 
-    Parameters
-    ----------
-    result
-        Existing photometry result (must have mag_ab).
-    apcorr_mag
-        Aperture correction in magnitudes: -2.5*log10(f_apcorr).
-    apcorr_mag_err
-        Uncertainty on apcorr_mag (e.g. robust scatter from selected stars).
+# ------------------------------------------------------------
+# Pixel scale helpers
+# ------------------------------------------------------------
+def _get_arcsec_per_pix_from_header(header) -> Optional[float]:
     """
+    Try to infer arcsec/pix from FITS WCS keywords.
+    Returns None if cannot be inferred robustly.
+    """
+    # 1) CDELT in degrees/pix
+    for k in ("CDELT1", "CDELT2"):
+        if k in header:
+            try:
+                val = float(header[k])
+                if np.isfinite(val) and val != 0:
+                    return abs(val) * 3600.0
+            except Exception:
+                pass
+
+    # 2) CD matrix in degrees/pix
+    # Pixel scale approx sqrt(CD1_1^2 + CD2_1^2) etc; we take CD1_1 if present
+    for k in ("CD1_1", "CD2_2"):
+        if k in header:
+            try:
+                val = float(header[k])
+                if np.isfinite(val) and val != 0:
+                    return abs(val) * 3600.0
+            except Exception:
+                pass
+
+    # 3) try WCS (if header has enough)
     try:
-        apcorr_mag = float(apcorr_mag)
+        w = WCS(header)
+        # proj_plane_pixel_scales gives degrees/pix in each axis
+        from astropy.wcs.utils import proj_plane_pixel_scales
+        sc = proj_plane_pixel_scales(w)  # degrees/pix
+        if sc is not None and len(sc) >= 1 and np.isfinite(sc[0]) and sc[0] != 0:
+            return float(abs(sc[0]) * 3600.0)
     except Exception:
-        apcorr_mag = np.nan
+        pass
+
+    return None
+
+
+def arcsec_to_pix(hduw, arcsec: float, fallback_arcsec_per_pix: Optional[float] = None) -> int:
+    """
+    Convert arcsec to pixels using header WCS if possible.
+    Falls back to fallback_arcsec_per_pix if provided.
+    """
+    hdr = None
     try:
-        apcorr_mag_err = float(apcorr_mag_err)
+        hdr = hduw.hdu.header
     except Exception:
-        apcorr_mag_err = np.nan
+        try:
+            hdr = hduw.header
+        except Exception:
+            hdr = None
 
-    result.apcorr_mag = apcorr_mag if np.isfinite(apcorr_mag) else None
-    result.apcorr_mag_err = apcorr_mag_err if np.isfinite(apcorr_mag_err) else None
+    asp = None
+    if hdr is not None:
+        asp = _get_arcsec_per_pix_from_header(hdr)
 
-    if result.mag_ab is None or not np.isfinite(result.mag_ab) or result.apcorr_mag is None:
-        result.mag_ab_apcorr = None
-        result.mag_ab_apcorr_err = None
-        return result
+    if asp is None:
+        if fallback_arcsec_per_pix is None:
+            raise RuntimeError("Cannot infer plate scale (arcsec/pix) from header; provide fallback.")
+        asp = float(fallback_arcsec_per_pix)
 
-    result.mag_ab_apcorr = float(result.mag_ab) + float(result.apcorr_mag)
+    pix = int(round(float(arcsec) / asp))
+    return max(pix, 1)
 
-    if result.mag_err is None or not np.isfinite(result.mag_err) or result.apcorr_mag_err is None:
-        result.mag_ab_apcorr_err = None
-    else:
-        result.mag_ab_apcorr_err = float(np.hypot(float(result.mag_err), float(result.apcorr_mag_err)))
 
-    return result
+def build_rect_ap_ann(
+    x: float, y: float,
+    width_pix: float,
+    height_pix: float,
+    theta_rad: float,
+    semi_out_pix: float,
+    bg_center: Optional[Tuple[float, float]] = None,
+) -> Tuple[RectangularAperture, RectangularAnnulus]:
+    """
+    Build rectangular aperture + annulus centered on same point (or external bg center).
+    """
+    centre = (float(x), float(y))
+    ann_c = bg_center if bg_center is not None else centre
+
+    ap = RectangularAperture(positions=centre, w=float(width_pix), h=float(height_pix), theta=float(theta_rad))
+    an = RectangularAnnulus(
+        positions=ann_c,
+        w_in=float(width_pix),
+        w_out=float(width_pix) + 2.0 * float(semi_out_pix),
+        h_in=float(height_pix),
+        h_out=float(height_pix) + 2.0 * float(semi_out_pix),
+        theta=float(theta_rad),
+    )
+    return ap, an
+
+
+@dataclass
+class C2StarMeasurement:
+    slot: int
+
+    # net rates (ct/s)
+    rate6: float
+    err6: Optional[float]
+    rate35: float
+    err35: Optional[float]
+
+    # ratio
+    c2: float
+    c2_err: Optional[float]
+
+    # --- extra audit fields (6") ---
+    aper_sum_6: float
+    bkg_per_pix_6: float
+    bkg_rms_per_pix_6: float
+    A_ap_eff_6: float
+    A_bg_eff_6: Optional[float]
+    unit_kind_6: str
+    exptime_6: Optional[float]
+
+    # --- extra audit fields (35") ---
+    aper_sum_35: float
+    bkg_per_pix_35: float
+    bkg_rms_per_pix_35: float
+    A_ap_eff_35: float
+    A_bg_eff_35: Optional[float]
+    unit_kind_35: str
+    exptime_35: Optional[float]
+
+
+def compute_c2_for_star(
+    phot: "PhotTable",
+    x: float, y: float,
+    width_pix: float,
+    theta_rad: float,
+    height6_pix: float,
+    height35_pix: float,
+    semi_out6_pix: float,
+    semi_out35_pix: float,
+    bg_center=None,
+    debug: bool = False,
+) -> C2StarMeasurement:
+
+    ap6, an6 = build_rect_ap_ann(x, y, width_pix, height6_pix, theta_rad, semi_out6_pix, bg_center=bg_center)
+    r6 = phot.perform_trail_rate_photometry(ap6, an6, debug=debug)
+    if not np.isfinite(r6.net_rate) or r6.net_rate <= 0:
+        raise ValueError(f"Invalid R6 net_rate: {r6.net_rate}")
+
+    ap35, an35 = build_rect_ap_ann(x, y, width_pix, height35_pix, theta_rad, semi_out35_pix, bg_center=bg_center)
+    r35 = phot.perform_trail_rate_photometry(ap35, an35, debug=debug)
+    if not np.isfinite(r35.net_rate) or r35.net_rate <= 0:
+        raise ValueError(f"Invalid R35 net_rate: {r35.net_rate}")
+
+    c2 = float(r35.net_rate / r6.net_rate)
+
+    # Propagación opcional si tienes net_rate_err
+    c2_err = None
+    if r6.net_rate_err is not None and r35.net_rate_err is not None:
+        e6 = float(r6.net_rate_err)
+        e35 = float(r35.net_rate_err)
+        c2_err = float(c2 * np.sqrt((e35 / r35.net_rate) ** 2 + (e6 / r6.net_rate) ** 2))
+
+    return C2StarMeasurement(
+        slot=-1,
+        rate6=float(r6.net_rate), err6=r6.net_rate_err,
+        rate35=float(r35.net_rate), err35=r35.net_rate_err,
+        c2=c2, c2_err=c2_err,
+
+        aper_sum_6=float(r6.aper_sum),
+        bkg_per_pix_6=float(r6.bkg_per_pix),
+        bkg_rms_per_pix_6=float(r6.bkg_rms_per_pix),
+        A_ap_eff_6=float(r6.A_ap_eff),
+        A_bg_eff_6=(float(r6.A_bg_eff) if r6.A_bg_eff is not None else None),
+        unit_kind_6=str(r6.unit_kind),
+        exptime_6=(float(r6.exptime) if r6.exptime is not None else None),
+
+        aper_sum_35=float(r35.aper_sum),
+        bkg_per_pix_35=float(r35.bkg_per_pix),
+        bkg_rms_per_pix_35=float(r35.bkg_rms_per_pix),
+        A_ap_eff_35=float(r35.A_ap_eff),
+        A_bg_eff_35=(float(r35.A_bg_eff) if r35.A_bg_eff is not None else None),
+        unit_kind_35=str(r35.unit_kind),
+        exptime_35=(float(r35.exptime) if r35.exptime is not None else None),
+    )
+
