@@ -1,2 +1,2 @@
-ann_large_arcsec,ann_small_arcsec,band,c2_mad,c2_mean,c2_median,c2_std,n,r_large_arcsec,r_small_arcsec
-10.0,6.0,UVW1,0.05192520167648131,1.2295093256789387,1.1391498841956653,0.23489915376411422,9,35.0,6.0
+band,n,c2_median,c2_mean,c2_std,c2_mad,r_small_arcsec,r_large_arcsec,ann_small_arcsec,ann_large_arcsec
+UVW1,10,1.158512375118678,1.1858789640809038,0.31836586137271516,0.07437106077693292,6.0,35.0,6.0,10.0

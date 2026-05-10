@@ -185,6 +185,9 @@ def action_phot_c2(config: ConfigParser) -> None:
         selector = TrailSelector(height=height6_pix, semi_out=semi6_pix, finalize_on_click=False)
         
         ui = UI(hduw)
+        ui.c2_height35_pix = height35_pix
+        ui.c2_semi35_pix = semi35_pix
+
 
         # SRCLIST overlay (optional but recommended)
         swsrli = _find_swsrli_for_simag(ftz, swsrli_files)
@@ -212,6 +215,16 @@ def action_phot_c2(config: ConfigParser) -> None:
 
         # Esto bloquea hasta que pulses Enter (y ahí se cierra la figura)
         ui.select_trail(selector)
+
+        #Guardemos screenshot para tesis
+        png_name = f"{Path(ftz).name}_c2_factor.png"
+        png_path = out_detail.parent / png_name
+
+        try:
+            ui.fig.savefig(png_path, dpi=200, bbox_inches="tight")
+            print(f"[C2] Snapshot saved: {png_path}")
+        except Exception as e:
+            print(f"[C2] WARN: could not save snapshot {png_path}: {e}")
 
         # Al volver aquí, las estrellas quedan en:
         sels = ui.calib_star_selections
@@ -279,16 +292,20 @@ def action_phot_c2(config: ConfigParser) -> None:
             except Exception as e:
                 print(f"[C2] WARN: slot A{slot} failed in {ftz.name}: {e}")
 
-    # --- write detail ---
-    if detail_rows:
-        fieldnames = sorted({k for r in detail_rows for k in r.keys()})
-        with out_detail.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            w.writerows(detail_rows)
-        print(f"[C2] Wrote detail: {out_detail}")
-    else:
-        print("[C2] No detail rows produced.")
+                # --- write detail ---
+            if detail_rows:
+                fieldnames = sorted({k for r in detail_rows for k in r.keys()})
+
+                write_header = (not out_detail.exists()) or (out_detail.stat().st_size == 0)
+                with out_detail.open("a", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                    if write_header:
+                        w.writeheader()
+                    w.writerows(detail_rows)
+
+                print(f"[C2] Appended detail: {out_detail}")
+            else:
+                print("[C2] No detail rows produced.")
 
     # --- write summary per band ---
     summary_rows: List[Dict[str, Any]] = []
@@ -307,13 +324,28 @@ def action_phot_c2(config: ConfigParser) -> None:
             ann_large_arcsec=ann_large_arcsec,
         ))
 
-
     if summary_rows:
-        fieldnames = sorted({k for r in summary_rows for k in r.keys()})
-        with out_file.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
+        # Fixed schema (do NOT change)
+        fieldnames = [
+            "band",
+            "n",
+            "c2_median",
+            "c2_mean",
+            "c2_std",
+            "c2_mad",
+            "r_small_arcsec",
+            "r_large_arcsec",
+            "ann_small_arcsec",
+            "ann_large_arcsec",
+        ]
+
+        write_header = (not out_file.exists()) or (out_file.stat().st_size == 0)
+        with out_file.open("a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if write_header:
+                w.writeheader()
             w.writerows(summary_rows)
-        print(f"[C2] Wrote summary: {out_file}")
+
+        print(f"[C2] Appended summary: {out_file}")
     else:
         print("[C2] No summary rows produced (no C2 computed).")

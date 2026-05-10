@@ -16,6 +16,8 @@ from src.photometry.hdu import HDUW
 from src.photometry.phot import PhotTable, PhotometryResult
 from src.photometry.ui import UI, TrailSelector
 from src.screening.xsa import convert_filter_name_to_xsa_name
+from astropy.io import fits as _fits
+from src.photometry.phot import arcsec_to_pix
 
 from common import (
     OBS_ID_COLS,
@@ -129,14 +131,6 @@ def find_srclist_in_same_dir(fits_path: Path) -> Path | None:
 # Helpers to download SRCLIST per exposure
 # ---------------------------------------------------------------------
 
-# def ensure_srclist_downloaded(config, observation_id: str, filt: str, dest_dir: Path) -> None:
-#     crawler = HttpCurlCrawler(
-#         download_directory=str(dest_dir.parent.parent),   # raíz DOWNLOAD_DIRECTORY
-#         base_url=config["INPUT"]["BASE_URL"],
-#         regex_pattern=config["PHOTOMETRY"].get("SRCLIST_REGEX", r"^.*?SWSRLI.*?\.FTZ$"),
-#     )
-#     crawler.crawl(observation_id=observation_id, filters=[filt])
-
 def download_srclist_ftz(url: str, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     args = [
@@ -198,6 +192,96 @@ def zp_from_ini_for_filter(config: ConfigParser, filt: str) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------
+# Coincidence-loss (CoI) helper
+# ---------------------------------------------------------------------
+def _parse_float_list(raw: str | None) -> list[float]:
+    if raw in (None, "", "None"):
+        return []
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    out: list[float] = []
+    for p in parts:
+        try:
+            out.append(float(p))
+        except Exception:
+            continue
+    return out
+
+
+def coi_f_polynomial(x: float, coeffs: list[float]) -> float:
+    """Evaluate polynomial f(x) = a0 + a1 x + a2 x^2 + ...
+
+    If coeffs is empty, returns 1.
+    """
+    if not coeffs:
+        return 1.0
+    y = 0.0
+    xp = 1.0
+    for a in coeffs:
+        y += float(a) * xp
+        xp *= float(x)
+    return float(y)
+
+
+def apply_coi_correction(
+    R_raw: float,
+    frame_time: float,
+    dead_fraction: float,
+    f_coeffs: list[float] | None = None,
+) -> float:
+    """Apply OM coincidence-loss correction to a total (source+background) rate.
+
+    Implements:
+      R_corr = - ln(1 - R_raw * t_f) / (t_f * (1 - d_f)) * f(R_raw * t_f)
+
+    Notes
+    -----
+    * R_raw must be the TOTAL rate in the CoI aperture (source+background).
+    * f(x) is an empirical polynomial term; if not provided, f(x)=1.
+    """
+    tf = float(frame_time)
+    df = float(dead_fraction)
+    if not np.isfinite(R_raw) or not np.isfinite(tf) or not np.isfinite(df):
+        raise ValueError("CoI: non-finite inputs")
+    if tf <= 0:
+        raise ValueError("CoI: invalid frame_time")
+    if not (0.0 <= df < 1.0):
+        raise ValueError("CoI: invalid dead fraction")
+
+    x = float(R_raw) * tf
+    # Numerical safety: x must be < 1
+    if x >= 1.0:
+        raise ValueError("CoI: R_raw * frame_time >= 1 (saturation)")
+    if x <= 0.0:
+        return float(R_raw)
+
+    base = -np.log(1.0 - x) / (tf * (1.0 - df))
+    f = coi_f_polynomial(x, f_coeffs or [])
+    return float(base * f)
+
+
+def coi_derivative_dR(
+    R_raw: float,
+    frame_time: float,
+    dead_fraction: float,
+    f_coeffs: list[float] | None = None,
+) -> float:
+    """dR_corr/dR_raw for uncertainty propagation.
+
+    For simplicity we ignore d f(x)/dx for the polynomial term.
+    """
+    tf = float(frame_time)
+    df = float(dead_fraction)
+    x = float(R_raw) * tf
+    if x >= 1.0:
+        return float("nan")
+    denom = (1.0 - x) * (1.0 - df)
+    if denom <= 0:
+        return float("nan")
+    f = coi_f_polynomial(x, f_coeffs or [])
+    return float(f / denom)
+
+
+# ---------------------------------------------------------------------
 # Screenshot path helper
 # ---------------------------------------------------------------------
 def _build_screenshot_path(config: ConfigParser, fits_path: Path, target: str) -> Path:
@@ -219,7 +303,7 @@ def _build_screenshot_path(config: ConfigParser, fits_path: Path, target: str) -
 # ---------------------------------------------------------------------
 # Robust scatter (MAD)
 # ---------------------------------------------------------------------
-def _mad_sigma(x: np.ndarray) -> float:
+def _mad_sigma(x: list[float]) -> float:
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
     if x.size < 2:
@@ -239,10 +323,6 @@ def _build_csv_row(
     fits_name: str,
     result: Optional[PhotometryResult],
     selector: Optional[TrailSelector],
-    v_mag_1: Optional[float] = None,
-    v_mag_1_corrected: Optional[float] = None,   
-    mlim_obs: Optional[float] = None,   
-
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "target_name": target_name,
@@ -265,6 +345,17 @@ def _build_csv_row(
         "A_bg_eff": None,
         "zp_ab": None,
 
+        # NEW: rate-domain corrections (for traceability)
+        "tds_corr": None,
+        "c2": None,
+        "f_apcorr": None,
+        "c1": None,
+        "coi_factor": None,
+        "rate_tot_6": None,
+        "rate_tot_6_coi": None,
+        "count_rate_coi": None,
+        "count_rate_final": None,
+
         "trail_height_pix": getattr(selector, "height", None) if selector else None,
         "trail_semi_out_pix": getattr(selector, "semi_out", None) if selector else None,
         "trail_semi_in_pix": getattr(selector, "semi_in", None) if selector else None,
@@ -273,11 +364,6 @@ def _build_csv_row(
         "apcorr_mag": None,
         "mag_ab_apcorr": None,
         "mag_ab_apcorr_err": None,
-
-        #A&A 2022 Catalogue
-        "v_mag_1": v_mag_1,
-        "v_mag_1_corrected": v_mag_1_corrected,
-        "mlim_obs": mlim_obs,
     }
 
     if result is None:
@@ -453,11 +539,6 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     ra2: float = float(extract_row_value(screening_row, POS2_RA_COLS))
     dec2: float = float(extract_row_value(screening_row, POS2_DEC_COLS))
 
-    v_mag_1: float = float(extract_row_value(screening_row, V_MAG_1_COL))
-    v_mag_1_corrected: float = float(extract_row_value(screening_row, V_MAG_1_CORRECTED_COL))
-    mlim_obs: float = float(extract_row_value(screening_row, MLIM_OBS_COL))
-
-
     fits_name: str = extract_row_value(screening_row, FITS_FILE_COLS)
     fits_path = Path(config["INPUT"]["DOWNLOAD_DIRECTORY"]) / observation_id / filt / fits_name
     if not fits_path.exists():
@@ -493,8 +574,6 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     ui = UI(hduw)
     ui.ax.set_title(f"{target} | obs={observation_id} | {fits_name}")
 
-    # pos1/pos2 markers (non-blocking)
-
     # WCS (usar el que ya venga en HDUW si existe)
     wcs = getattr(hduw, "wcs", None)
     if wcs is None:
@@ -524,7 +603,6 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         else:
             try:
                 xsa_filt = convert_filter_name_to_xsa_name(filt)
-                # base = "https://nxsa.esac.esa.int/nxsa-sl/servlet/data-action-aio"
                 base = config["INPUT"]["BASE_URL"]
                 url = build_srclist_url(base, obsno=observation_id, filt=xsa_filt, expno=expno)
                 print(
@@ -545,10 +623,29 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         print(f"[PHOT] NOTE: SRCLIST still not found; skipping overlay.")
     else:
         ui.add_srclist_overlay(srclist_path)
+        
+        #Store TDS_CORR keyword from sourcelist
+        tds_corr = 1.0
+        try:
+            with _fits.open(str(srclist_path), memmap=False) as _hdul:
+                tds_corr = float(_hdul[0].header.get("TDS_CORR", 1.0))
+        except Exception:
+            tds_corr = 1.0
 
 
-    selector = TrailSelector(height=13.0, semi_out=6.0, finalize_on_click=False)
 
+    # Default trail-box height equivalent to r=6" (full width = 12")
+    # 1) Standard 6"-equivalent box height (full width = 12")
+    #    We approximate A_6_eff by scaling A_h_eff by the ratio of heights,
+    #    keeping the same trail length/width.
+    try:
+
+        height6_pix = float(arcsec_to_pix(hduw, 12.0))
+    except Exception:
+        # fallback: assume binned ~0.95"/pix; 12" ~ 12.6 pix
+        height6_pix = 12.6
+    # selector = TrailSelector(height=13.0, semi_out=6.0, finalize_on_click=False)
+    selector = TrailSelector(height=height6_pix, semi_out=6.0, finalize_on_click=False)
     try:
         sel = ui.select_trail(selector)
     except Exception as e:
@@ -569,9 +666,6 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
                 fits_name=fits_name,
                 result=None,
                 selector=selector,
-                v_mag_1 = v_mag_1,
-                v_mag_1_corrected = v_mag_1_corrected,
-                mlim_obs = mlim_obs,
             ).keys()
         ),
     )
@@ -586,9 +680,6 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
             fits_name=fits_name,
             result=None,
             selector=selector,
-            v_mag_1 = v_mag_1,
-            v_mag_1_corrected = v_mag_1_corrected,
-            mlim_obs = mlim_obs,
         )
         append_row(filepath=phot_csv, row=row)
         return
@@ -611,6 +702,7 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     # Compute apcorr from selected stars (if any) BEFORE writing main CSV row
     apcorr_mag = 0.0
     apcorr_mag_err = 0.0
+    f_apcorr = 1.0
 
     apcorr_dir = Path(config.get("PHOTOMETRY", "APCORR_DIRECTORY", fallback="")).expanduser()
     if str(apcorr_dir).strip() == "":
@@ -630,6 +722,11 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         )
         if apcorr_tuple is not None:
             apcorr_mag, apcorr_mag_err = apcorr_tuple
+            # multiplicative factor corresponding to apcorr_mag
+            try:
+                f_apcorr = float(10.0 ** (-float(apcorr_mag) / 2.5))
+            except Exception:
+                f_apcorr = 1.0
     else:
         print("[PHOT] NOTE: no SRCLIST available; apcorr not computed.")
 
@@ -641,10 +738,138 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         fits_name=fits_name,
         result=res,
         selector=selector,
-        v_mag_1 = v_mag_1,
-        v_mag_1_corrected = v_mag_1_corrected,
-        mlim_obs = mlim_obs,
     )
+
+    # -----------------------------------------------------------------
+    # Apply rate-domain corrections consistently (CoI, TDS, C2, apcorr)
+    # -----------------------------------------------------------------
+    # 0) Inputs from photometry result
+    R_net_h = float(res.count_rate) if res.count_rate is not None else float("nan")
+    R_net_h_err = float(res.count_rate_err) if res.count_rate_err is not None else float("nan")
+    bkg_per_pix = float(res.bkg_per_pix) if res.bkg_per_pix is not None else 0.0
+    A_h_eff = float(res.A_ap_eff) if res.A_ap_eff is not None else float("nan")
+
+    # # 1) Standard 6"-equivalent box height (full width = 12")
+    # #    We approximate A_6_eff by scaling A_h_eff by the ratio of heights,
+    # #    keeping the same trail length/width.
+    # try:
+    #     from src.photometry.phot import arcsec_to_pix  # type: ignore
+    #     height6_pix = float(arcsec_to_pix(hduw, 12.0))
+    # except Exception:
+    #     # fallback: assume binned ~0.95"/pix; 12" ~ 12.6 pix
+    #     height6_pix = 12.6
+
+    trail_height_pix_eff = float(getattr(ap_box, "h", np.nan))
+    if np.isfinite(A_h_eff) and np.isfinite(trail_height_pix_eff) and trail_height_pix_eff > 0:
+        A6_eff = float(A_h_eff * (height6_pix / trail_height_pix_eff))
+    else:
+        A6_eff = float("nan")
+
+    # 2) C1: not yet implemented interactively; default to 1.0
+    C1 = float(config.get("PHOTOMETRY", "C1", fallback="1.0") or 1.0)
+    R_net_6 = float(R_net_h * C1) if np.isfinite(R_net_h) else float("nan")
+    R_net_6_err = float(R_net_h_err * C1) if np.isfinite(R_net_h_err) else float("nan")
+
+    # 3) Build total (source+background) rate in the 6"-equivalent aperture
+    R_tot_6 = float("nan")
+    if np.isfinite(R_net_6) and np.isfinite(A6_eff):
+        R_tot_6 = float(R_net_6 + bkg_per_pix * A6_eff)
+
+    # 4) CoI correction on total rate
+    hdr = hduw.hdu.header
+    frame_time = float(hdr["FRAMTIME"]) * 1e-3  # ms -> s
+    dead_fraction = float(hdr.get("DEADFRAC", 0.0))
+    
+    coi_coeffs = _parse_float_list(config.get("PHOTOMETRY", "COI_F_COEFFS", fallback=""))
+    R_tot_6_coi = float("nan")
+    coi_factor = float("nan")
+    R_net_6_coi = float("nan")
+    R_net_6_coi_err = float("nan")
+
+    if np.isfinite(R_tot_6) and np.isfinite(frame_time):
+        try:
+            R_tot_6_coi = apply_coi_correction(
+                R_raw=R_tot_6,
+                frame_time=float(frame_time),
+                dead_fraction=float(dead_fraction),
+                f_coeffs=coi_coeffs,
+            )
+            coi_factor = float(R_tot_6_coi / R_tot_6) if R_tot_6 > 0 else float("nan")
+            # back to net by subtracting background term (assumed unaffected)
+            if np.isfinite(A6_eff):
+                R_net_6_coi = float(R_tot_6_coi - bkg_per_pix * A6_eff)
+            # propagate statistical uncertainty via derivative dRcorr/dRraw
+            d_dR = coi_derivative_dR(
+                R_raw=R_tot_6,
+                frame_time=float(frame_time),
+                dead_fraction=float(dead_fraction),
+                f_coeffs=coi_coeffs,
+            )
+            if np.isfinite(d_dR) and np.isfinite(R_net_6_err):
+                # treat sigma(R_tot_6) ~ sigma(R_net_6)
+                R_net_6_coi_err = float(abs(d_dR) * R_net_6_err)
+        except Exception as e:
+            print(f"[PHOT] WARN: CoI correction failed; using raw rates (reason: {e})")
+            R_tot_6_coi = R_tot_6
+            coi_factor = 1.0
+            R_net_6_coi = R_net_6
+            R_net_6_coi_err = R_net_6_err
+    else:
+        # no CoI possible
+        R_tot_6_coi = R_tot_6
+        coi_factor = 1.0
+        R_net_6_coi = R_net_6
+        R_net_6_coi_err = R_net_6_err
+
+    # 5) TDS correction retrieved from source list
+
+    # 6) C2 correction (config.ini); for non-UV filters set C2=1
+    C2 = float(config.get("PHOTOMETRY", "C2", fallback="1.0") or 1.0)
+
+    # 7) Build corrected rates
+    #    - without apcorr (for mag_ab)
+    #    - with apcorr (for mag_ab_apcorr)
+    R_final_no_apcorr = float(R_net_6_coi * tds_corr * C2) if np.isfinite(R_net_6_coi) else float("nan")
+    R_final = float(R_final_no_apcorr * f_apcorr) if np.isfinite(R_final_no_apcorr) else float("nan")
+
+    R_final_no_apcorr_err = float(R_net_6_coi_err * tds_corr * C2) if np.isfinite(R_net_6_coi_err) else float("nan")
+    R_final_err = float(R_final_no_apcorr_err * f_apcorr) if np.isfinite(R_final_no_apcorr_err) else float("nan")
+
+    # 8) Convert to AB magnitudes
+    zp_ab = res.zp_ab if res.zp_ab is not None else (pt.zero_point if pt.zero_point is not None else None)
+    mag_ab = None
+    mag_ab_err = None
+    mag_ab_apcorr = None
+    mag_ab_apcorr_err = None
+
+    if zp_ab is not None and np.isfinite(R_final_no_apcorr) and R_final_no_apcorr > 0:
+        mag_ab = float(-2.5 * np.log10(R_final_no_apcorr) + float(zp_ab))
+        if np.isfinite(R_final_no_apcorr_err) and R_final_no_apcorr_err >= 0:
+            mag_ab_err = float(1.0857 * R_final_no_apcorr_err / R_final_no_apcorr)
+
+    if zp_ab is not None and np.isfinite(R_final) and R_final > 0:
+        mag_ab_apcorr = float(-2.5 * np.log10(R_final) + float(zp_ab))
+        if np.isfinite(R_final_err) and R_final_err >= 0:
+            stat_err = float(1.0857 * R_final_err / R_final)
+            mag_ab_apcorr_err = float(np.hypot(stat_err, float(apcorr_mag_err)))
+
+    # Overwrite row with consistent outputs
+    row["zp_ab"] = float(zp_ab) if zp_ab is not None else row.get("zp_ab")
+    row["mag_ab"] = mag_ab
+    row["mag_err"] = mag_ab_err
+    row["mag_ab_apcorr"] = mag_ab_apcorr
+    row["mag_ab_apcorr_err"] = mag_ab_apcorr_err
+    row["apcorr_mag"] = apcorr_mag
+
+    row["tds_corr"] = tds_corr
+    row["c2"] = C2
+    row["f_apcorr"] = f_apcorr
+    row["c1"] = C1
+    row["coi_factor"] = coi_factor
+    row["rate_tot_6"] = R_tot_6
+    row["rate_tot_6_coi"] = R_tot_6_coi
+    row["count_rate_coi"] = R_net_6_coi
+    row["count_rate_final"] = R_final
 
     # derive actual geometry from the final apertures
     trail_height_pix = float(getattr(ap_box, "h", np.nan))
@@ -659,15 +884,5 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     row["trail_height_pix"] = trail_height_pix
     row["trail_semi_out_pix"] = semi_out
     row["trail_semi_in_pix"] = semi_in
-
-    # store aperture corrected mag and error
-    row["apcorr_mag"] = apcorr_mag
-    if res.mag_ab is not None:
-        row["mag_ab_apcorr"] = float(res.mag_ab) + float(apcorr_mag)
-        base_err = float(res.mag_err) if res.mag_err is not None else 0.0
-        row["mag_ab_apcorr_err"] = float(np.hypot(base_err, apcorr_mag_err))
-    else:
-        row["mag_ab_apcorr"] = None
-        row["mag_ab_apcorr_err"] = None
 
     append_row(filepath=phot_csv, row=row)

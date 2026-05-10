@@ -26,6 +26,8 @@ try:
 except Exception:
     WCS = None
 
+import matplotlib.patches as patches
+from matplotlib.transforms import Affine2D
 class TrailSelector:
     def __init__(self, height: float = 5.0, semi_out: float = 5.0,
                  finalize_on_click: bool = False) -> None:
@@ -167,6 +169,12 @@ class TrailSelector:
 
 class UI:
     def __init__(self, hduw: HDUW) -> None:
+        #Bloque para el screenshot de C2 factor h6->h35
+        self.keep_calib_boxes: bool = False
+        # Parámetros opcionales para C2 (box grande)
+        self.c2_height35_pix: float | None = None
+        self.c2_semi35_pix: float | None = None
+
         # Preview patches (managed by UI)
         self._ap_patch = None
         self._an_patch = None
@@ -582,7 +590,8 @@ class UI:
             "Right-drag: pan | Wheel: zoom\n"
             "[/]: height  { / }: annulus\n"
             "O: outside background (right-click)\n"
-            "I: reset background   R: reset   Enter: accept   Esc: cancel"
+            "I: reset background   R: reset   Enter: accept   Esc: cancel\n" \
+           f"C2 keep boxes: {'ON' if self.keep_calib_boxes else 'OFF'}   (toggle: +)"
         )
         msg = default if text is None else text
 
@@ -751,6 +760,18 @@ class UI:
             return
         sel = self._selector
 
+        # --- GLOBAL toggle for C2 screenshot mode ---
+        # On some keyboards '+' arrives as '=' (shift+'='). Support both.
+        
+        if event.key in ("+", "=", "plus"):
+            self.keep_calib_boxes = not self.keep_calib_boxes
+            state = "ON" if self.keep_calib_boxes else "OFF"
+            print(f"[UI] keep_calib_boxes = {self.keep_calib_boxes} (toggle with 5/+)")
+            # redraw default hint with the new state
+            self._draw_hint_text()
+            return
+
+
         # Section for SRCLIST apcorr selection
             # ---------- Calibration mode arming: press A then 1..5 ----------
         if event.key in ("a", "A"):
@@ -814,6 +835,20 @@ class UI:
                                     "LEFT-click near a yellow source to select again.")
                 return
 
+            # # Toggle "keep calibration boxes" mode for nice screenshots
+            # # Matplotlib can report '+' as '+' or '=' (depending on keyboard/shift)
+            # if event.key in ("+", "=", "plus"):
+            #     self.keep_calib_boxes = not self.keep_calib_boxes
+            #     state = "ON" if self.keep_calib_boxes else "OFF"
+            #     print(f"[UI] keep_calib_boxes = {self.keep_calib_boxes} (toggle with +)")
+            #     self._draw_hint_text(
+            #         f"C2 keep-boxes mode: {state}\n"
+            #         f"Press 'A' then 1..5 to pick stars.\n"
+            #         f"Toggle keep boxes with: 5 or +\n"
+            #         f"When ON: saved A# boxes remain drawn (includes 35\" overlay if provided)."
+            #     )
+            #     return
+
             # Save slot on Enter (do NOT close figure)
             if event.key == "enter":
                 if self._calib_slot is None or self._calib_center is None or self._calib_srclist_index is None:
@@ -836,6 +871,21 @@ class UI:
 
                 print(f"[UI] Calibration saved: A{self._calib_slot}  idx={self._calib_srclist_index}  "
                     f"x={cx:.2f} y={cy:.2f}  width={self._calib_width:.1f} height={sel.height:.1f} semi_out={sel.semi_out:.1f}")
+
+                if self.keep_calib_boxes:
+                    try:
+                        self._draw_c2_overlays_at(
+                            x=float(cx), y=float(cy),
+                            width=float(self._calib_width),
+                            theta=float(sel.theta) if sel.theta is not None else 0.0,
+                            height6=float(sel.height),
+                            semi6=float(sel.semi_out),
+                            height35=float(self.c2_height35_pix) if self.c2_height35_pix is not None else None,
+                            semi35=float(self.c2_semi35_pix) if self.c2_semi35_pix is not None else None,
+                        )
+                    except Exception as e:
+                        print(f"[UI] WARN: could not draw persistent C2 overlays: {e}")
+
 
                 # Exit calibration slot (user can press A then next digit)
                 self._calib_active = False
@@ -1245,3 +1295,44 @@ class UI:
             ax.set_xlim(xlim0)
             ax.set_ylim(ylim0)
             ax.figure.canvas.draw_idle()
+
+
+    def _draw_rot_rect(self, x, y, w, h, theta, **kwargs):
+        # rectángulo centrado en (x,y)
+        rect = patches.Rectangle(
+            (x - w/2.0, y - h/2.0),
+            w, h,
+            fill=False,
+            **kwargs
+        )
+        # rotar alrededor del centro
+        t = Affine2D().rotate_around(x, y, theta) + self.ax.transData
+        rect.set_transform(t)
+        self.ax.add_patch(rect)
+        return rect
+
+    def _draw_c2_overlays_at(self, x, y, width, theta, height6, semi6, height35=None, semi35=None):
+        # # --- “pequeño” (6") ---
+        # self._draw_rot_rect(x, y, width, height6, theta, linewidth=1.5, alpha=0.9)  # color default matplotlib
+        # # annulus pequeño: outer e inner
+        # self._draw_rot_rect(x, y, width + 2*semi6, height6 + 2*semi6, theta, linestyle='--', linewidth=1.2, alpha=0.7)
+        # self._draw_rot_rect(x, y, width, height6, theta, linestyle='--', linewidth=1.2, alpha=0.7)
+
+        # # --- “grande” (35") ---
+        # if height35 is not None and semi35 is not None:
+        #     # colores distintos: naranja/rojo suelen quedar bien sobre el mapa
+        #     self._draw_rot_rect(x, y, width, height35, theta, edgecolor='orange', linewidth=1.8, alpha=0.9)
+        #     self._draw_rot_rect(x, y, width + 2*semi35, height35 + 2*semi35, theta, edgecolor='red', linestyle='--', linewidth=1.2, alpha=0.7)
+        #     self._draw_rot_rect(x, y, width, height35, theta, edgecolor='red', linestyle='--', linewidth=1.2, alpha=0.7)
+        
+        # Small (6") box + annulus (nice blue/cyan)
+        self._draw_rot_rect(x, y, width, height6, theta, edgecolor="deepskyblue", linewidth=1.8, alpha=0.95)
+        self._draw_rot_rect(x, y, width + 2*semi6, height6 + 2*semi6, theta, edgecolor="cyan", linestyle="--", linewidth=1.2, alpha=0.8)
+
+        # Large (35") box + annulus (orange/red)
+        if height35 is not None and semi35 is not None:
+            self._draw_rot_rect(x, y, width, height35, theta, edgecolor="orange", linewidth=2.0, alpha=0.9)
+            self._draw_rot_rect(x, y, width + 2*semi35, height35 + 2*semi35, theta, edgecolor="red", linestyle="--", linewidth=1.2, alpha=0.75)
+
+        self.update()
+
