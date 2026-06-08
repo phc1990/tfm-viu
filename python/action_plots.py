@@ -58,6 +58,28 @@ def _normalize_name(name: str) -> str:
     return n
 
 
+# def _latex_header_name(c: str) -> str:
+#     return {
+#         "target_name": "Asteroid",
+#         "observation_id": "Obs. ID",
+#         "fits_name": "FITS file",
+#         "count_rate": r"$c$",
+#         "count_rate_err": r"$\sigma_c$",
+#         "trail_height_pix": r"$h_{\rm trail}$",
+#         "mag_ab_apcorr": r"$m_{\rm AB}$",
+#         "mag_ab_apcorr_err": r"$\sigma_m$",
+#         "v_mag_1": r"$V_{\rm pred}$",
+#         "mlim_obs": r"$m_{\rm lim}$",
+#     }.get(c, c)
+def _latex_header_name(c: str) -> str:
+    return {
+        "target_name": "Asteroid",
+        "observation_id": "Obs. ID",
+        "fits_name": "Frame",
+        "count_rate": r"$c$ (ct s$^{-1}$)",
+        "mag_ab_apcorr": r"$m_{\rm AB}$",
+    }.get(c, c)
+
 def _plots_output_dir(config: ConfigParser, phot_csv: Path) -> Path:
     if config.has_section("PLOTS") and config.has_option("PLOTS", "OUTPUT_DIRECTORY"):
         return Path(config.get("PLOTS", "OUTPUT_DIRECTORY")).expanduser()
@@ -137,9 +159,13 @@ def fetch_rocks_params_by_name(
             if rocks_name:
                 cache[str(rocks_name)] = entry
 
+                # Also store by normalized returned name.
+                cache[_normalize_name(str(rocks_name))] = entry
+
         # Mark remaining as not found
         for n in to_query:
             if n not in cache:
+                print(f"[PLOTS][ROCKS] WARN: not resolved by rocks: {n}")
                 cache[n] = {"_status": "not_found"}
 
         save_rocks_cache(cache_path, cache)
@@ -184,29 +210,36 @@ def action_plots(config: ConfigParser) -> Path:
     out_png = out_dir / "color_diagram_mag_ab_apcorr_vs_vmag_taxonomy.png"
     cache_path = out_dir / "rocks_cache.json"
 
+    # latex_columns = [
+    #     "target_name",
+    #     "observation_id",
+    #     "fits_name",
+    #     "count_rate",
+    #     "count_rate_err",
+    #     "trail_height_pix",
+    #     "mag_ab_apcorr",
+    #     "mag_ab_apcorr_err",
+    #     "v_mag_1",
+    #     "mlim_obs",
+    # ]
+
     latex_columns = [
         "target_name",
         "observation_id",
         "fits_name",
         "count_rate",
-        "count_rate_err",
-        "trail_height_pix",
         "mag_ab_apcorr",
-        "mag_ab_apcorr_err",
-        "v_mag_1",
-        "mlim_obs",
     ]
 
     out_tex = out_dir / "photometry_output_table.tex"
-    export_photometry_csv_to_latex(
-        phot_csv=phot_csv,
-        out_tex=out_tex,
-        columns=latex_columns,
-        caption="Photometry output exported from the pipeline.",
-        label="tab:photometry_output",
-        max_rows=None,  # o pon un número si quieres truncar
-    )
-
+    # export_photometry_csv_to_latex(
+    #     phot_csv=phot_csv,
+    #     out_tex=out_tex,
+    #     columns=latex_columns,
+    #     caption="Photometry output exported from the pipeline.",
+    #     label="tab:photometry_output",
+    #     max_rows=None,  # o pon un número si quieres truncar
+    # )
 
 
     # 1) Read CSV and accumulate per-object color
@@ -236,15 +269,30 @@ def action_plots(config: ConfigParser) -> Path:
         counts: dict[str, int] = {}
 
         all_names: list[str] = []
+        all_table_names: list[str] = []
+
         total_rows = 0
         valid_rows = 0
 
         for row in reader:
             total_rows += 1
+            # name_raw = (row.get(name_col) or "").strip()
+            # name = _normalize_name(name_raw)
+            # if not name:
+            #     continue
+
+            # v = _to_float(row.get("v_mag_1"))
+            # y = _to_float(row.get("mag_ab_apcorr"))
+            # if v is None or y is None:
+            #     continue
             name_raw = (row.get(name_col) or "").strip()
             name = _normalize_name(name_raw)
             if not name:
                 continue
+
+            # For LaTeX/table name resolution: include every object in the CSV,
+            # even if the row is not valid for the color plot.
+            all_table_names.append(name)
 
             v = _to_float(row.get("v_mag_1"))
             y = _to_float(row.get("mag_ab_apcorr"))
@@ -264,8 +312,33 @@ def action_plots(config: ConfigParser) -> Path:
             f"No valid rows to plot. Need numeric v_mag_1 and mag_ab_apcorr in {phot_csv}"
         )
 
+        print(f"[PLOTS][ROCKS][DBG] names for table lookup: {len(set(all_table_names))}")
+    for test_name in ["Astrometria", "Potomac", "Sarpedon"]:
+        print(f"[PLOTS][ROCKS][DBG] {test_name} in all_table_names? {test_name in set(all_table_names)}")
+    
     # 2) Fetch taxonomy/albedo/diameter via rocks (cached)
-    rocks_info = fetch_rocks_params_by_name(all_names, cache_path)
+    rocks_info = fetch_rocks_params_by_name(all_table_names, cache_path)
+
+    # export_photometry_csv_to_latex(
+    #     phot_csv=phot_csv,
+    #     out_tex=out_tex,
+    #     columns=latex_columns,
+    #     caption="Photometry output exported from the pipeline.",
+    #     label="tab:photometry_output",
+    #     max_rows=None,
+    #     rocks_cache_path=cache_path,
+    #     landscape=True,
+    # )
+    export_photometry_csv_to_latex(
+    phot_csv=phot_csv,
+    out_tex=out_tex,
+    columns=latex_columns,
+    caption="Photometry output exported from the pipeline.",
+    label="tab:photometry_output",
+    max_rows=None,
+    rocks_cache_path=cache_path,
+    landscape=False,
+    )
 
     # 3) Build final one-point-per-object arrays + taxonomy buckets
     xs: list[float] = []
@@ -335,16 +408,29 @@ def action_plots(config: ConfigParser) -> Path:
         else:
             print("[PLOTS][THR] Not enough C/S points to estimate threshold robustly.")
 
-        fit = fit_line(xb, yb)
+        # fit = fit_line(xb, yb)
 
-        if fit is not None:
-            m, c = fit
-            xx = np.linspace(min(xb), max(xb), 50)
-            yy = m * xx + c
-            plt.plot(xx, yy, linestyle="-")  # color por defecto
-            print(f"[PLOTS][FIT] {b}: slope={m:.4f}, intercept={c:.4f}, N={len(xb)}")
+        # if fit is not None:
+        #     m, c = fit
+        #     xx = np.linspace(min(xb), max(xb), 50)
+        #     yy = m * xx + c
+        #     plt.plot(xx, yy, linestyle="-")  # color por defecto
+        #     print(f"[PLOTS][FIT] {b}: slope={m:.4f}, intercept={c:.4f}, N={len(xb)}")
+        # else:
+        #     print(f"[PLOTS][FIT] {b}: not enough points (N={len(xb)})")
+        if b in {"C", "S"}:
+            fit = fit_line(xb, yb)
+
+            if fit is not None:
+                m, c = fit
+                xx = np.linspace(min(xb), max(xb), 50)
+                yy = m * xx + c
+                plt.plot(xx, yy, linestyle="-")
+                print(f"[PLOTS][FIT] {b}: slope={m:.4f}, intercept={c:.4f}, N={len(xb)}")
+            else:
+                print(f"[PLOTS][FIT] {b}: not enough points (N={len(xb)})")
         else:
-            print(f"[PLOTS][FIT] {b}: not enough points (N={len(xb)})")
+            print(f"[PLOTS][FIT] {b}: skipped")
 
     plt.xlabel("v_mag_1")
     plt.ylabel("mag_ab_apcorr")
@@ -481,6 +567,14 @@ def _format_value_err_pair(value: Optional[float], err: Optional[float], sig_err
     return (val_s, err_s)
 
 
+# def export_photometry_csv_to_latex(
+#     phot_csv: Path,
+#     out_tex: Path,
+#     columns: list[str],
+#     caption: str = "Photometry results.",
+#     label: str = "tab:photometry",
+#     max_rows: Optional[int] = None,
+# ) -> None:
 def export_photometry_csv_to_latex(
     phot_csv: Path,
     out_tex: Path,
@@ -488,6 +582,8 @@ def export_photometry_csv_to_latex(
     caption: str = "Photometry results.",
     label: str = "tab:photometry",
     max_rows: Optional[int] = None,
+    rocks_cache_path: Optional[Path] = None,
+    landscape: bool = True,
 ) -> None:
     """
     Export selected columns from photometry_output.csv to a LaTeX table.
@@ -498,6 +594,8 @@ def export_photometry_csv_to_latex(
         raise FileNotFoundError(f"CSV not found: {phot_csv}")
 
     out_tex.parent.mkdir(parents=True, exist_ok=True)
+
+    rocks_cache = load_rocks_cache(rocks_cache_path) if rocks_cache_path else {}
 
     with phot_csv.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -511,16 +609,37 @@ def export_photometry_csv_to_latex(
             )
 
         lines: list[str] = []
+        # # lines.append(r"\begin{table*}[t]")
+        # # lines.append(r"\centering")
+        # # # 14 columnas -> lo más seguro es usar \scriptsize y tabular con l's.
+        # # lines.append(r"\scriptsize")
+        # # col_spec = "l" * len(columns)
+        # # lines.append(rf"\begin{{tabular}}{{{col_spec}}}")
+        # if landscape:
+        #     lines.append(r"\begin{sidewaystable*}[p]")
+        # else:
+        #     lines.append(r"\begin{table*}[t]")
+
+        # lines.append(r"\centering")
+        # lines.append(r"\scriptsize")
+        # lines.append(r"\setlength{\tabcolsep}{3pt}")
+        # lines.append(r"\renewcommand{\arraystretch}{1.05}")
+
+        # col_spec = "l" * len(columns)
+        # lines.append(r"\resizebox{\textwidth}{!}{%")
+        # lines.append(rf"\begin{{tabular}}{{{col_spec}}}")
+        # lines.append(r"\toprule")
         lines.append(r"\begin{table*}[t]")
         lines.append(r"\centering")
-        # 14 columnas -> lo más seguro es usar \scriptsize y tabular con l's.
         lines.append(r"\scriptsize")
-        col_spec = "l" * len(columns)
+        lines.append(r"\setlength{\tabcolsep}{3pt}")
+        lines.append(r"\renewcommand{\arraystretch}{1.03}")
+
+        col_spec = "lllcc"
         lines.append(rf"\begin{{tabular}}{{{col_spec}}}")
-        lines.append(r"\toprule")
 
         # Header
-        header = " & ".join(_latex_escape(c) for c in columns) + r" \\"
+        header = " & ".join(_latex_header_name(c) for c in columns) + r" \\"
         lines.append(header)
         lines.append(r"\midrule")
 
@@ -544,10 +663,14 @@ def export_photometry_csv_to_latex(
                 # Rows
         for row in reader:
             # Parse numeric pairs we want to format consistently
-            cr = _to_float(row.get("count_rate")) if "count_rate" in columns else None
-            cr_err = _to_float(row.get("count_rate_err")) if "count_rate_err" in columns else None
-            mab = _to_float(row.get("mag_ab_apcorr")) if "mag_ab_apcorr" in columns else None
-            mab_err = _to_float(row.get("mag_ab_apcorr_err")) if "mag_ab_apcorr_err" in columns else None
+            # cr = _to_float(row.get("count_rate")) if "count_rate" in columns else None
+            # cr_err = _to_float(row.get("count_rate_err")) if "count_rate_err" in columns else None
+            # mab = _to_float(row.get("mag_ab_apcorr")) if "mag_ab_apcorr" in columns else None
+            # mab_err = _to_float(row.get("mag_ab_apcorr_err")) if "mag_ab_apcorr_err" in columns else None
+            cr = _to_float(row.get("count_rate"))
+            cr_err = _to_float(row.get("count_rate_err"))
+            mab = _to_float(row.get("mag_ab_apcorr"))
+            mab_err = _to_float(row.get("mag_ab_apcorr_err"))
 
             cr_s, cr_err_s = _format_value_err_pair(cr, cr_err, sig_err=2)
             mab_s, mab_err_s = _format_value_err_pair(mab, mab_err, sig_err=2)
@@ -555,14 +678,45 @@ def export_photometry_csv_to_latex(
             vals = []
             for c in columns:
                 # Apply special formatting for the two value/error pairs
+                # if c == "count_rate":
+                #     v_str = cr_s
+                # elif c == "count_rate_err":
+                #     v_str = cr_err_s
+                # elif c == "mag_ab_apcorr":
+                #     v_str = mab_s
+                # elif c == "mag_ab_apcorr_err":
+                #     v_str = mab_err_s
+                # else:
+                #     v = row.get(c, "")
+                #     if v is None:
+                #         v = ""
+                #     v_str = str(v).strip()
+                #     if v_str.lower() in {"none", "nan", "null"}:
+                #         v_str = ""
+
+                #     if c == "fits_name" and v_str:
+                #         m = re.search(r"(OMS\d{3})", v_str)
+                #         if m:
+                #             v_str = m.group(1)
+
+                #     if c in {"target_name", "sso_name"} and v_str:
+                #         name_norm = _normalize_name(v_str)
+                #         info = rocks_cache.get(name_norm, {})
+                #         number = info.get("rocks_number")
+
+                #         if number not in (None, "", "None", "nan"):
+                #             try:
+                #                 number_s = str(int(float(number)))
+                #                 v_str = f"({number_s}) {name_norm}"
+                #             except Exception:
+                #                 v_str = name_norm
+                #         else:
+                #             v_str = name_norm
+
                 if c == "count_rate":
-                    v_str = cr_s
-                elif c == "count_rate_err":
-                    v_str = cr_err_s
+                    v_str = rf"${cr_s} \pm {cr_err_s}$" if cr_s and cr_err_s else cr_s
                 elif c == "mag_ab_apcorr":
-                    v_str = mab_s
-                elif c == "mag_ab_apcorr_err":
-                    v_str = mab_err_s
+                    v_str = rf"${mab_s} \pm {mab_err_s}$" if mab_s and mab_err_s else mab_s
                 else:
                     v = row.get(c, "")
                     if v is None:
@@ -571,20 +725,39 @@ def export_photometry_csv_to_latex(
                     if v_str.lower() in {"none", "nan", "null"}:
                         v_str = ""
 
-                vals.append(_latex_escape(v_str))
+                    if c == "fits_name" and v_str:
+                        m = re.search(r"(OMS\d{3})", v_str)
+                        if m:
+                            v_str = m.group(1)
+
+                    if c in {"target_name", "sso_name"} and v_str:
+                        name_norm = _normalize_name(v_str)
+                        info = rocks_cache.get(name_norm, {})
+                        number = info.get("rocks_number")
+
+                        if number not in (None, "", "None", "nan"):
+                            try:
+                                number_s = str(int(float(number)))
+                                v_str = f"({number_s}) {name_norm}"
+                            except Exception:
+                                v_str = name_norm
+                        else:
+                            v_str = name_norm
+                if c in {"count_rate", "mag_ab_apcorr"}:
+                        vals.append(v_str)
+                else:
+                    vals.append(_latex_escape(v_str))
 
             lines.append(" & ".join(vals) + r" \\")
             n += 1
             if max_rows is not None and n >= max_rows:
                 break
 
-
         lines.append(r"\bottomrule")
         lines.append(r"\end{tabular}")
         lines.append(rf"\caption{{{_latex_escape(caption)}}}")
         lines.append(rf"\label{{{_latex_escape(label)}}}")
         lines.append(r"\end{table*}")
-        lines.append("")  # trailing newline
 
     out_tex.write_text("\n".join(lines), encoding="utf-8")
     print(f"[PLOTS][LATEX] Saved: {out_tex}")

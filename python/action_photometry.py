@@ -656,19 +656,35 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
 
     # Main photometry CSV: migrate header upfront (append_row rejects unknown keys)
     phot_csv = config["PHOTOMETRY"]["FILEPATH"]
-    ensure_csv_has_fields(
-        phot_csv,
-        list(
-            _build_csv_row(
-                target_name=target,
-                obs_id=observation_id,
-                filt=filt,
-                fits_name=fits_name,
-                result=None,
-                selector=selector,
-            ).keys()
-        ),
+    required_fields = list(
+        _build_csv_row(
+            target_name=target,
+            obs_id=observation_id,
+            filt=filt,
+            fits_name=fits_name,
+            result=None,
+            selector=selector,
+        ).keys()
     )
+
+    for extra_col in ["v_mag_1", "v_mag_1_corrected", "mlim_obs"]:
+        if extra_col not in required_fields:
+            required_fields.append(extra_col)
+
+    ensure_csv_has_fields(phot_csv, required_fields)
+    # ensure_csv_has_fields(
+    #     phot_csv,
+    #     list(
+    #         _build_csv_row(
+    #             target_name=target,
+    #             obs_id=observation_id,
+    #             filt=filt,
+    #             fits_name=fits_name,
+    #             result=None,
+    #             selector=selector,
+    #         ).keys()
+    #     ),
+    # )
 
     # If user escapes selection, write null row and exit
     if ap_box is None:
@@ -739,6 +755,10 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         result=res,
         selector=selector,
     )
+    # Propagate screening/catalogue context into photometry_output.csv
+    row["v_mag_1"] = extract_row_value(screening_row, V_MAG_1_COL)
+    row["v_mag_1_corrected"] = extract_row_value(screening_row, V_MAG_1_CORRECTED_COL)
+    row["mlim_obs"] = extract_row_value(screening_row, MLIM_OBS_COL)
 
     # -----------------------------------------------------------------
     # Apply rate-domain corrections consistently (CoI, TDS, C2, apcorr)

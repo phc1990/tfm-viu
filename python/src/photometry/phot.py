@@ -104,7 +104,7 @@ class PhotTable:
         f = (filter_code or "").strip().upper()
         return {"L": "UVW1", "M": "UVM2", "S": "UVW2", "V": "V", "B": "B", "U": "U"}.get(f, f)
 
-
+    
     def _effective_area_from_mask(self, ap) -> float:
         mask = ap.to_mask(method='exact')
         if isinstance(mask, (list, tuple)):
@@ -199,6 +199,53 @@ class PhotTable:
 
         return "unknown", bunit_val
 
+    def _effective_area_from_mask_valid(self, ap, data: np.ndarray) -> float:
+        mask = ap.to_mask(method="exact")
+
+        if isinstance(mask, (list, tuple)):
+            total = 0.0
+            for m in mask:
+                cut = m.cutout(data)
+                w = m.data
+                if cut is None or w is None:
+                    continue
+                valid = np.isfinite(cut) & (w > 0)
+                total += np.nansum(w[valid])
+            return float(total)
+
+        cut = mask.cutout(data)
+        w = mask.data
+        if cut is None or w is None:
+            return 0.0
+
+        valid = np.isfinite(cut) & (w > 0)
+        return float(np.nansum(w[valid]))
+
+
+    def _effective_area_bg_from_mask_valid(self, ann, data: np.ndarray) -> Optional[float]:
+        if ann is None:
+            return None
+
+        mask = ann.to_mask(method="exact")
+
+        if isinstance(mask, (list, tuple)):
+            total = 0.0
+            for m in mask:
+                cut = m.cutout(data)
+                w = m.data
+                if cut is None or w is None:
+                    continue
+                valid = np.isfinite(cut) & (w > 0)
+                total += np.nansum(w[valid])
+            return float(total)
+
+        cut = mask.cutout(data)
+        w = mask.data
+        if cut is None or w is None:
+            return None
+
+        valid = np.isfinite(cut) & (w > 0)
+        return float(np.nansum(w[valid]))
     # ----------------- calibration -----------------
 
     def calibrate_against_source_list(
@@ -275,10 +322,50 @@ class PhotTable:
             unit_kind = "rate"
 
         # Aperture sum (exact) and effective areas
-        phot_ap = aperture_photometry(data, rectangular_aperture, method='exact')
-        Cap = float(phot_ap['aperture_sum'][0])
-        A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
-        A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+        # Aperture sum (exact), ignoring invalid/out-of-image pixels
+        finite_mask = ~np.isfinite(data)
+
+        data_safe = np.array(data, dtype=float, copy=True)
+        data_safe[finite_mask] = 0.0
+
+        phot_ap = aperture_photometry(
+            data_safe,
+            rectangular_aperture,
+            method="exact",
+            mask=finite_mask,
+        )
+
+        Cap = float(phot_ap["aperture_sum"][0])
+
+        A_ap_geom = self._effective_area_from_mask(rectangular_aperture)
+
+        A_ap_eff = self._effective_area_from_mask_valid(
+            rectangular_aperture,
+            data,
+        )
+
+        A_bg_eff = self._effective_area_bg_from_mask_valid(
+            rectangular_annulus,
+            data,
+        )
+
+        if not np.isfinite(Cap):
+            raise ValueError(
+                "Non-finite aperture sum: aperture overlaps NaNs/out-of-image pixels."
+            )
+
+        if not np.isfinite(A_ap_eff) or A_ap_eff <= 0:
+            raise ValueError(
+                "Invalid effective aperture area after masking NaNs/out-of-image pixels."
+            )
+
+        if np.isfinite(A_ap_geom) and A_ap_geom > 0:
+            lost_frac = 1.0 - A_ap_eff / A_ap_geom
+            if np.isfinite(lost_frac) and lost_frac > 0.05:
+                print(
+                    f"[PHOT] WARN: aperture loses {100.0 * lost_frac:.1f}% "
+                    "of area due to NaN/out-of-image pixels."
+                )
 
         # Background stats (mean, std) from annulus (or global fallback)
         bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)
@@ -289,6 +376,21 @@ class PhotTable:
             # Cap is in counts/s (sum over pixels); background contribution is mean_rate*area
             Cnet_rate = Cap - bkg_mean * A_ap_eff
             if not np.isfinite(Cnet_rate) or Cnet_rate <= 0:
+                print("[PHOT][FAILDBG]")
+                print(f"  file        = {getattr(self.hduw, 'file', None)}")
+                print(f"  unit_kind   = {unit_kind}")
+                print(f"  BUNIT       = {bunit_str}")
+                print(f"  Cap         = {Cap}")
+                print(f"  bkg_mean    = {bkg_mean}")
+                print(f"  bkg_std     = {bkg_std}")
+                print(f"  A_ap_eff    = {A_ap_eff}")
+                print(f"  A_bg_eff    = {A_bg_eff}")
+                print(f"  bkg*A_ap    = {bkg_mean * A_ap_eff}")
+                print(f"  net         = {Cap - bkg_mean * A_ap_eff}")
+                print(f"  ap pos      = {getattr(rectangular_aperture, 'positions', None)}")
+                print(f"  ap w/h/theta= {getattr(rectangular_aperture, 'w', None)}, "
+                    f"{getattr(rectangular_aperture, 'h', None)}, "
+                    f"{getattr(rectangular_aperture, 'theta', None)}")
                 raise ValueError("Non-positive count rate (rate image); cannot compute magnitude.")
 
             # Uncertainty in rate:
@@ -356,6 +458,22 @@ class PhotTable:
         Cnet = Cap - bkg_mean * A_ap_eff
         c = Cnet / exptime
         if not np.isfinite(c) or c <= 0:
+            print("[PHOT][FAILDBG]")
+            print(f"  file        = {getattr(self.hduw, 'file', None)}")
+            print(f"  unit_kind   = {unit_kind}")
+            print(f"  BUNIT       = {bunit_str}")
+            print(f"  Cap         = {Cap}")
+            print(f"  bkg_mean    = {bkg_mean}")
+            print(f"  bkg_std     = {bkg_std}")
+            print(f"  A_ap_eff    = {A_ap_eff}")
+            print(f"  A_bg_eff    = {A_bg_eff}")
+            print(f"  bkg*A_ap    = {bkg_mean * A_ap_eff}")
+            print(f"  net         = {Cap - bkg_mean * A_ap_eff}")
+            print(f"  ap pos      = {getattr(rectangular_aperture, 'positions', None)}")
+            print(f"  ap w/h/theta= {getattr(rectangular_aperture, 'w', None)}, "
+                f"{getattr(rectangular_aperture, 'h', None)}, "
+                f"{getattr(rectangular_aperture, 'theta', None)}")
+            
             raise ValueError("Non-positive count rate; cannot compute magnitude.")
         m_ab = float(self.zero_point - 2.5 * math.log10(c))
 
@@ -427,11 +545,34 @@ class PhotTable:
         unit_kind, bunit_str = self._data_unit_kind_and_bunit()
 
         # Aperture sum (exact) and effective areas
-        phot_ap = aperture_photometry(data, rectangular_aperture, method="exact")
-        Cap = float(phot_ap["aperture_sum"][0])  # in native units: counts OR counts/s
+        # phot_ap = aperture_photometry(data, rectangular_aperture, method="exact")
+        # Cap = float(phot_ap["aperture_sum"][0])  # in native units: counts OR counts/s
 
-        A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
-        A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+        # A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
+        # A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+        finite_mask = ~np.isfinite(data)
+
+        data_safe = np.array(data, dtype=float, copy=True)
+        data_safe[finite_mask] = 0.0
+
+        phot_ap = aperture_photometry(
+            data_safe,
+            rectangular_aperture,
+            method="exact",
+            mask=finite_mask,
+        )
+
+        Cap = float(phot_ap["aperture_sum"][0])
+
+        A_ap_eff = self._effective_area_from_mask_valid(
+            rectangular_aperture,
+            data,
+        )
+
+        A_bg_eff = self._effective_area_bg_from_mask_valid(
+            rectangular_annulus,
+            data,
+        )
 
         bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)  # per-pixel, native units
 

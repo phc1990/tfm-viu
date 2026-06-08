@@ -1,4 +1,4 @@
-# WITH scr AS (  SELECT DISTINCT observation::text AS observation_id,object::text AS sso_name  FROM sso.screening_output_raw  where "L" like 'Y' or "L" like 'D'),xmm AS (  SELECT    observation_id,    sso_name,    ra_deg_1, dec_deg_1,    ra_deg_2, dec_deg_2,    filter,    xmatch_type,    v_mag_1,    v_mag_1_corrected,    mlim_obs  FROM sso.xmm_om_unique WHERE filter = 'L') SELECT  x.observation_id,  x.sso_name,  x.ra_deg_1, x.dec_deg_1,  x.ra_deg_2, x.dec_deg_2,  x.filter,  x.xmatch_type,  x.v_mag_1,  x.v_mag_1_corrected,  x.mlim_obs FROM scr s JOIN xmm x  ON x.observation_id = s.observation_id AND x.sso_name       = s.sso_name; 
+# (note: we are including ad-hoc screened asteroids from pau:line 62 potomac and forward) WITH scr AS (  SELECT DISTINCT observation::text AS observation_id,object::text AS sso_name  FROM sso.screening_output_raw  where "L" like 'Y' or "L" like 'D'),xmm AS (  SELECT    observation_id,    sso_name,    ra_deg_1, dec_deg_1,    ra_deg_2, dec_deg_2,    filter,    xmatch_type,    v_mag_1,    v_mag_1_corrected,    mlim_obs  FROM sso.xmm_om_unique WHERE filter = 'L') SELECT  x.observation_id,  x.sso_name,  x.ra_deg_1, x.dec_deg_1,  x.ra_deg_2, x.dec_deg_2,  x.filter,  x.xmatch_type,  x.v_mag_1,  x.v_mag_1_corrected,  x.mlim_obs FROM scr s JOIN xmm x  ON x.observation_id = s.observation_id AND x.sso_name       = s.sso_name; 
 "observation_id";"sso_name";"ra_deg_1";"dec_deg_1";"ra_deg_2";"dec_deg_2";"filter";"xmatch_type";"v_mag_1";"v_mag_1_corrected";"mlim_obs"
 "0781040101";Barbara;50.011715;0.46338347;50.32284;0.31945792;L;2;12.36;13.8442;20.696785
 "0743010501";Ohio;346.1028;0.15892091;346.18143;0.14519955;L;4;15.56;17.0442;19.943396
@@ -59,3 +59,18 @@
 "0677690141";"2006 KP121";30.381132;-7.09505;31.09136;-7.2169237;L;2;18.55;20.0342;20.452381
 "0677690140";"2006 KP121";30.381132;-7.09505;31.09136;-7.2169237;L;3;18.55;20.0342;20.360147
 "0402360101";"2006 BQ6";27.57514;32.197796;20.135792;33.51657;L;3;15.85;17.3342;20.841488
+"0674480401";Potomac;211.0623;-1.7947428;211.08228;-1.7920687;L;2;16.23;17.7142;19.507391
+"0800400501";Sarpedon;137.51436;-0.7671195;137.53622;-0.744149;L;2;17.12;18.6042;20.12307
+"0400890201";Tinette;253.26077;-39.867844;253.36403;-40.001247;L;3;17.44;18.9242;20.89806
+"0303670101";Seeligeria;215.06903;6.657949;215.11058;6.594688;L;2;15.63;17.1142;20.0592
+"0012440101";Lictoria;13.996037;-1.4153179;14.078837;-1.363112;L;2;15.29;16.7742;19.364645
+"0675470501";Ariane;332.7109;-12.227171;332.7691;-12.196121;L;2;16.84;18.3242;19.927706
+"0693990301";Vivian;169.74861;6.926413;169.98149;6.814373;L;2;17.4;18.8842;21.13498
+"0804250301";Flagstaff;266.6556;-29.832102;266.75275;-29.849316;L;2;17.51;18.9942;20.047064
+"0205330501";Epstein;346.99942;-2.2958732;347.021;-2.2808473;L;2;17.33;18.8142;19.402891
+"0725290145";Kalman;135.12029;1.059697;135.40196;1.1154217;L;3;18.15;19.6342;19.777819
+"0747390133";Parler;16.833363;-0.37462756;16.847107;-0.3693347;L;2;18.45;19.9342;20.230965
+"0747400143";Parler;18.632523;0.13034242;18.643545;0.13309434;L;2;18.31;19.7942;20.265831
+"0412592401";"1996 UT";83.690285;21.889324;83.71287;21.897413;L;2;17.96;19.4442;20.054035
+"0412592501";"1996 UT";83.76607;21.908499;83.77202;21.908983;L;2;17.97;19.4542;19.299034
+"0694640901";"1996 BB2";266.1385;-29.415518;266.23633;-29.382048;L;2;20.17;21.6542;20.098526

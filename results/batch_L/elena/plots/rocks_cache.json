@@ -1,4 +1,12 @@
 {
+  "1996 BB2": {
+    "_status": "ok",
+    "diameter_km": 4.627,
+    "pv": 0.0752,
+    "rocks_name": "1996 BB2",
+    "rocks_number": 14059,
+    "taxonomy_class": "C"
+  },
   "1996 UT": {
     "_status": "ok",
     "diameter_km": 15.161,
@@ -6,6 +14,14 @@
     "rocks_name": "1996 UT",
     "rocks_number": 8415,
     "taxonomy_class": "B"
+  },
+  "1998 SM135": {
+    "_status": "ok",
+    "diameter_km": 2.651,
+    "pv": 0.225,
+    "rocks_name": "1998 SM135",
+    "rocks_number": 49222,
+    "taxonomy_class": "S"
   },
   "Aaltje": {
     "_status": "ok",
@@ -23,6 +39,14 @@
     "rocks_number": 523,
     "taxonomy_class": "M"
   },
+  "Ariane": {
+    "_status": "ok",
+    "diameter_km": 9.461,
+    "pv": 0.2987,
+    "rocks_name": "Ariane",
+    "rocks_number": 1225,
+    "taxonomy_class": "S"
+  },
   "Asteropaios": {
     "_status": "ok",
     "diameter_km": 56.899,
@@ -30,6 +54,14 @@
     "rocks_name": "Asteropaios",
     "rocks_number": 4805,
     "taxonomy_class": "K"
+  },
+  "Astrometria": {
+    "_status": "ok",
+    "diameter_km": 17.367,
+    "pv": 0.0452,
+    "rocks_name": "Astrometria",
+    "rocks_number": 25000,
+    "taxonomy_class": "X"
   },
   "Barbara": {
     "_status": "ok",
@@ -79,6 +111,22 @@
     "rocks_number": 3529,
     "taxonomy_class": "X"
   },
+  "Epstein": {
+    "_status": "ok",
+    "diameter_km": 17.025,
+    "pv": 0.1161,
+    "rocks_name": "Epstein",
+    "rocks_number": 2928,
+    "taxonomy_class": "X"
+  },
+  "Flagstaff": {
+    "_status": "ok",
+    "diameter_km": 11.434,
+    "pv": 0.2551,
+    "rocks_name": "Flagstaff",
+    "rocks_number": 2118,
+    "taxonomy_class": "S"
+  },
   "Fredtreasure": {
     "_status": "ok",
     "diameter_km": 15.685,
@@ -127,6 +175,14 @@
     "rocks_number": 12352,
     "taxonomy_class": "X"
   },
+  "Kalman": {
+    "_status": "ok",
+    "diameter_km": 6.501,
+    "pv": 0.2383,
+    "rocks_name": "Kalman",
+    "rocks_number": 4992,
+    "taxonomy_class": "S"
+  },
   "Kaneko": {
     "_status": "ok",
     "diameter_km": 19.006,
@@ -142,6 +198,14 @@
     "rocks_name": "Landi",
     "rocks_number": 2381,
     "taxonomy_class": "S"
+  },
+  "Lictoria": {
+    "_status": "ok",
+    "diameter_km": 73.783,
+    "pv": 0.0496,
+    "rocks_name": "Lictoria",
+    "rocks_number": 1107,
+    "taxonomy_class": "P"
   },
   "Lucubratio": {
     "_status": "ok",
@@ -159,6 +223,14 @@
     "rocks_number": 5122,
     "taxonomy_class": "S"
   },
+  "Parler": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "Parler",
+    "rocks_number": 6550,
+    "taxonomy_class": "V"
+  },
   "Pesonen": {
     "_status": "ok",
     "diameter_km": 10.73,
@@ -166,6 +238,14 @@
     "rocks_name": "Pesonen",
     "rocks_number": 11263,
     "taxonomy_class": "C"
+  },
+  "Pluto": {
+    "_status": "ok",
+    "diameter_km": 2374.0,
+    "pv": 0.5201,
+    "rocks_name": "Pluto",
+    "rocks_number": 134340,
+    "taxonomy_class": ""
   },
   "Pobeda": {
     "_status": "ok",
@@ -175,6 +255,14 @@
     "rocks_number": 1908,
     "taxonomy_class": "S"
   },
+  "Potomac": {
+    "_status": "ok",
+    "diameter_km": 66.229,
+    "pv": 0.0471,
+    "rocks_name": "Potomac",
+    "rocks_number": 1345,
+    "taxonomy_class": "X"
+  },
   "Richardbaum": {
     "_status": "ok",
     "diameter_km": 3.8,
@@ -182,6 +270,22 @@
     "rocks_name": "Richardbaum",
     "rocks_number": 7966,
     "taxonomy_class": "V"
+  },
+  "Sarpedon": {
+    "_status": "ok",
+    "diameter_km": 77.912,
+    "pv": 0.066,
+    "rocks_name": "Sarpedon",
+    "rocks_number": 2223,
+    "taxonomy_class": "Z"
+  },
+  "Seeligeria": {
+    "_status": "ok",
+    "diameter_km": 82.783,
+    "pv": 0.0301,
+    "rocks_name": "Seeligeria",
+    "rocks_number": 892,
+    "taxonomy_class": "P"
   },
   "Solvejg": {
     "_status": "ok",
@@ -199,6 +303,22 @@
     "rocks_number": 1497,
     "taxonomy_class": "X"
   },
+  "The": {
+    "_status": "ok",
+    "diameter_km": 4.21,
+    "pv": 0.2874,
+    "rocks_name": "The",
+    "rocks_number": 5408,
+    "taxonomy_class": ""
+  },
+  "Tinette": {
+    "_status": "ok",
+    "diameter_km": 21.899,
+    "pv": 0.0821,
+    "rocks_name": "Tinette",
+    "rocks_number": 687,
+    "taxonomy_class": "P"
+  },
   "Transvaalia": {
     "_status": "ok",
     "diameter_km": 29.186,
@@ -206,6 +326,14 @@
     "rocks_name": "Transvaalia",
     "rocks_number": 715,
     "taxonomy_class": "S"
+  },
+  "Vivian": {
+    "_status": "ok",
+    "diameter_km": 27.929,
+    "pv": 0.059,
+    "rocks_name": "Vivian",
+    "rocks_number": 1623,
+    "taxonomy_class": "P"
   },
   "Weisell": {
     "_status": "ok",
