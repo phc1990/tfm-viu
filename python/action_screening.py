@@ -197,19 +197,17 @@ def action_screening(
         #         }
         #     )
         #     break  # go to next observation row
-        else:
-            # IMPORTANT:
-            # Preserve the input FITS_FILE for non-detections.
-            # If we blank it, start.py cannot match this screening row back to the
-            # corresponding input row, and the same candidate is screened again.
-            input_fits_file = extract_row_value(input_row, FITS_FILE_COLS)
 
+        else:
+            # Non-detection is interpreted at candidate level:
+            # target + observation_id + filter has no usable detection in any frame.
+            # Therefore it must not be tied to a specific FITS file.
             append_row(
-                filepath=config['SCREENING']['FILEPATH'],
+                filepath=config["SCREENING"]["FILEPATH"],
                 row={
                     **input_row,
-                    FITS_FILE_COLS[0]: input_fits_file,
+                    FITS_FILE_COLS[0]: "NO_FITS",
                     DECISION_COLS[0]: NON_DETECTION_VALS[0],
-                }
+                },
             )
             break  # go to next observation row
