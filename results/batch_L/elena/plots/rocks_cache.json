@@ -1,12 +1,4 @@
 {
-  "1996 BB2": {
-    "_status": "ok",
-    "diameter_km": 4.627,
-    "pv": 0.0752,
-    "rocks_name": "1996 BB2",
-    "rocks_number": 14059,
-    "taxonomy_class": "C"
-  },
   "1996 UT": {
     "_status": "ok",
     "diameter_km": 15.161,
@@ -14,14 +6,6 @@
     "rocks_name": "1996 UT",
     "rocks_number": 8415,
     "taxonomy_class": "B"
-  },
-  "1998 SM135": {
-    "_status": "ok",
-    "diameter_km": 2.651,
-    "pv": 0.225,
-    "rocks_name": "1998 SM135",
-    "rocks_number": 49222,
-    "taxonomy_class": "S"
   },
   "Aaltje": {
     "_status": "ok",
@@ -111,22 +95,6 @@
     "rocks_number": 3529,
     "taxonomy_class": "X"
   },
-  "Epstein": {
-    "_status": "ok",
-    "diameter_km": 17.025,
-    "pv": 0.1161,
-    "rocks_name": "Epstein",
-    "rocks_number": 2928,
-    "taxonomy_class": "X"
-  },
-  "Flagstaff": {
-    "_status": "ok",
-    "diameter_km": 11.434,
-    "pv": 0.2551,
-    "rocks_name": "Flagstaff",
-    "rocks_number": 2118,
-    "taxonomy_class": "S"
-  },
   "Fredtreasure": {
     "_status": "ok",
     "diameter_km": 15.685,
@@ -175,14 +143,6 @@
     "rocks_number": 12352,
     "taxonomy_class": "X"
   },
-  "Kalman": {
-    "_status": "ok",
-    "diameter_km": 6.501,
-    "pv": 0.2383,
-    "rocks_name": "Kalman",
-    "rocks_number": 4992,
-    "taxonomy_class": "S"
-  },
   "Kaneko": {
     "_status": "ok",
     "diameter_km": 19.006,
@@ -222,14 +182,6 @@
     "rocks_name": "Mucha",
     "rocks_number": 5122,
     "taxonomy_class": "S"
-  },
-  "Parler": {
-    "_status": "ok",
-    "diameter_km": NaN,
-    "pv": NaN,
-    "rocks_name": "Parler",
-    "rocks_number": 6550,
-    "taxonomy_class": "V"
   },
   "Pesonen": {
     "_status": "ok",
@@ -303,14 +255,6 @@
     "rocks_number": 1497,
     "taxonomy_class": "X"
   },
-  "The": {
-    "_status": "ok",
-    "diameter_km": 4.21,
-    "pv": 0.2874,
-    "rocks_name": "The",
-    "rocks_number": 5408,
-    "taxonomy_class": ""
-  },
   "Tinette": {
     "_status": "ok",
     "diameter_km": 21.899,
@@ -326,6 +270,12 @@
     "rocks_name": "Transvaalia",
     "rocks_number": 715,
     "taxonomy_class": "S"
+  },
+  "UBS": {
+    "_status": "not_found"
+  },
+  "Unknown Bright Source": {
+    "_status": "not_found"
   },
   "Vivian": {
     "_status": "ok",
