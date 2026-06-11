@@ -1,0 +1,90 @@
+{
+  "Barbara": {
+    "_status": "ok",
+    "diameter_km": 46.3,
+    "pv": 0.1853,
+    "rocks_name": "Barbara",
+    "rocks_number": 234,
+    "taxonomy_class": "L"
+  },
+  "Chesneau": {
+    "_status": "ok",
+    "diameter_km": 5.35,
+    "pv": 0.2847,
+    "rocks_name": "Chesneau",
+    "rocks_number": 6065,
+    "taxonomy_class": ""
+  },
+  "Chrisclark": {
+    "_status": "ok",
+    "diameter_km": 19.089,
+    "pv": 0.0494,
+    "rocks_name": "Chrisclark",
+    "rocks_number": 6723,
+    "taxonomy_class": "C"
+  },
+  "Fredtreasure": {
+    "_status": "ok",
+    "diameter_km": 15.685,
+    "pv": 0.0802,
+    "rocks_name": "Fredtreasure",
+    "rocks_number": 13859,
+    "taxonomy_class": "D"
+  },
+  "Guericke": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "Guericke",
+    "rocks_number": 11537,
+    "taxonomy_class": ""
+  },
+  "Ivanka": {
+    "_status": "ok",
+    "diameter_km": 9.7,
+    "pv": 0.1605,
+    "rocks_name": "Ivanka",
+    "rocks_number": 8573,
+    "taxonomy_class": "C"
+  },
+  "Pluto": {
+    "_status": "ok",
+    "diameter_km": 2374.0,
+    "pv": 0.5201,
+    "rocks_name": "Pluto",
+    "rocks_number": 134340,
+    "taxonomy_class": ""
+  },
+  "Potomac": {
+    "_status": "ok",
+    "diameter_km": 66.229,
+    "pv": 0.0471,
+    "rocks_name": "Potomac",
+    "rocks_number": 1345,
+    "taxonomy_class": "X"
+  },
+  "Seeligeria": {
+    "_status": "ok",
+    "diameter_km": 82.783,
+    "pv": 0.0301,
+    "rocks_name": "Seeligeria",
+    "rocks_number": 892,
+    "taxonomy_class": "P"
+  },
+  "Tampere": {
+    "_status": "ok",
+    "diameter_km": 16.243,
+    "pv": 0.1729,
+    "rocks_name": "Tampere",
+    "rocks_number": 1497,
+    "taxonomy_class": "X"
+  },
+  "The": {
+    "_status": "ok",
+    "diameter_km": 4.21,
+    "pv": 0.2874,
+    "rocks_name": "The",
+    "rocks_number": 5408,
+    "taxonomy_class": ""
+  }
+}
