@@ -187,12 +187,28 @@ def action_screening(
             # No more detections in this observation → go to next observation row
             break
 
+        # else:
+        #     append_row(
+        #         filepath=config['SCREENING']['FILEPATH'],
+        #         row={
+        #             **input_row,
+        #             FITS_FILE_COLS[0]: None,
+        #             DECISION_COLS[0]: NON_DETECTION_VALS[0],
+        #         }
+        #     )
+        #     break  # go to next observation row
         else:
+            # IMPORTANT:
+            # Preserve the input FITS_FILE for non-detections.
+            # If we blank it, start.py cannot match this screening row back to the
+            # corresponding input row, and the same candidate is screened again.
+            input_fits_file = extract_row_value(input_row, FITS_FILE_COLS)
+
             append_row(
                 filepath=config['SCREENING']['FILEPATH'],
                 row={
                     **input_row,
-                    FITS_FILE_COLS[0]: None,
+                    FITS_FILE_COLS[0]: input_fits_file,
                     DECISION_COLS[0]: NON_DETECTION_VALS[0],
                 }
             )

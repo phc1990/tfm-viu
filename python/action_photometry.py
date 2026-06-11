@@ -17,7 +17,8 @@ from src.photometry.phot import PhotTable, PhotometryResult
 from src.photometry.ui import UI, TrailSelector
 from src.screening.xsa import convert_filter_name_to_xsa_name
 from astropy.io import fits as _fits
-from src.photometry.phot import arcsec_to_pix
+from src.photometry.phot import arcsec_to_pix, compute_c1_for_star
+from src.photometry.utils import angle_to_rad
 
 from common import (
     OBS_ID_COLS,
@@ -312,6 +313,30 @@ def _mad_sigma(x: list[float]) -> float:
     mad = np.median(np.abs(x - med))
     return float(1.4826 * mad)
 
+# def _angle_to_rad(theta: Any) -> float:
+#     """
+#     Return theta as a plain float in radians.
+
+#     photutils/astropy apertures may store theta either as:
+#       - a plain float
+#       - an astropy Quantity with angular units, usually rad
+#     """
+#     if theta is None:
+#         return 0.0
+
+#     try:
+#         # astropy Quantity case
+#         if hasattr(theta, "to_value"):
+#             import astropy.units as u
+#             return float(theta.to_value(u.rad))
+#     except Exception:
+#         pass
+
+#     try:
+#         return float(theta)
+#     except Exception:
+#         return 0.0
+
 
 # ---------------------------------------------------------------------
 # Build photometry CSV row (includes apcorr columns always)
@@ -325,46 +350,59 @@ def _build_csv_row(
     selector: Optional[TrailSelector],
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
-        "target_name": target_name,
-        "observation_id": obs_id,
-        "filter": filt,
-        "fits_name": fits_name,
+    # Identification
+    "target_name": target_name,
+    "observation_id": obs_id,
+    "filter": filt,
+    "fits_name": fits_name,
 
-        "mag_ab": None,
-        "mag_err": None,
-        "count_rate": None,
-        "count_rate_err": None,
-        "net_counts": None,
-        "net_counts_err": None,
-        "aper_counts": None,
-        "bkg_per_pix": None,
-        "bkg_rms_per_pix": None,
-        "bkg_counts_ap": None,
-        "bkg_counts_ap_err": None,
-        "A_ap_eff": None,
-        "A_bg_eff": None,
-        "zp_ab": None,
+    # Final science products
+    "mag_ab": None,
+    "mag_err": None,
+    "mag_ab_apcorr": None,
+    "mag_ab_apcorr_err": None,
 
-        # NEW: rate-domain corrections (for traceability)
-        "tds_corr": None,
-        "c2": None,
-        "f_apcorr": None,
-        "c1": None,
-        "coi_factor": None,
-        "rate_tot_6": None,
-        "rate_tot_6_coi": None,
-        "count_rate_coi": None,
-        "count_rate_final": None,
+    # Raw trail photometry
+    "count_rate": None,
+    "count_rate_err": None,
+    "net_counts": None,
+    "net_counts_err": None,
+    "aper_counts": None,
+    "bkg_per_pix": None,
+    "bkg_rms_per_pix": None,
+    "bkg_counts_ap": None,
+    "bkg_counts_ap_err": None,
+    "A_ap_eff": None,
+    "A_bg_eff": None,
+    "zp_ab": None,
 
-        "trail_height_pix": getattr(selector, "height", None) if selector else None,
-        "trail_semi_out_pix": getattr(selector, "semi_out", None) if selector else None,
-        "trail_semi_in_pix": getattr(selector, "semi_in", None) if selector else None,
+    # Geometry
+    "trail_height_pix": None,
+    "trail_semi_out_pix": None,
+    "trail_semi_in_pix": None,
 
-        # NEW (always present)
-        "apcorr_mag": None,
-        "mag_ab_apcorr": None,
-        "mag_ab_apcorr_err": None,
-    }
+    # Correction factors
+    "tds_corr": None,
+    "c2": None,
+    "f_apcorr": None,
+    "apcorr_mag": None,
+    "c1": None,
+    "c1_err": None,
+    "c1_detail_csv": None,
+    "coi_factor": None,
+
+    # Rate-domain correction chain
+    "rate_bkg_6": None,
+    "rate_tot_6": None,
+    "rate_tot_6_coi": None,
+    "count_rate_coi": None,
+    "count_rate_final": None,
+
+    # Screening/catalogue context
+    "v_mag_1": None,
+    "v_mag_1_corrected": None,
+    "mlim_obs": None,
+}
 
     if result is None:
         return row
@@ -522,6 +560,234 @@ def _write_apcorr_star_csv(
     print("[PHOT] WARN: no valid stars measured; apcorr not computed.")
     return 0, out_csv, None
 
+# ---------------------------------------------------------------------
+# C1 factor: hbox -> 6 arcsec standard height, only when hbox < h6
+# ---------------------------------------------------------------------
+def _compute_c1_if_needed(
+    *,
+    config: ConfigParser,
+    hduw: HDUW,
+    pt: PhotTable,
+    srclist_path: Optional[Path],
+    fits_name: str,
+    observation_id: str,
+    filt: str,
+    target: str,
+    trail_width_pix: float,
+    trail_height_pix: float,
+    trail_theta_rad: float,
+    trail_semi_out_pix: float,
+    height6_pix: float,
+) -> tuple[float, float, Optional[Path]]:
+    """
+    Compute C1 = R_6arcsec / R_hbox only if the asteroid trail box height
+    is smaller than the standard 6 arcsec radius equivalent box.
+
+    Returns:
+      (C1, C1_err, detail_csv_path)
+
+    If not needed, returns (1.0, 0.0, None).
+    If needed but no valid stars are measured, falls back to [PHOTOMETRY] C1.
+    """
+
+    # Small tolerance to avoid triggering C1 for 12.6 vs 13 px rounding noise.
+    if (
+        not np.isfinite(trail_height_pix)
+        or not np.isfinite(height6_pix)
+        or trail_height_pix <= 0
+        or height6_pix <= 0
+        or trail_height_pix >= (height6_pix - 0.5)
+    ):
+        return 1.0, 0.0, None
+
+    c1_fallback = float(config.get("PHOTOMETRY", "C1", fallback="1.0") or 1.0)
+
+    print(
+        "[PHOT][C1] Needed: "
+        f"trail_height={trail_height_pix:.2f}px < height6={height6_pix:.2f}px. "
+        "Opening C1 calibration step."
+    )
+
+    # Output directory: reuse APCORR_DIRECTORY unless a C1_DIRECTORY is defined.
+    c1_dir_raw = config.get("PHOTOMETRY", "C1_DIRECTORY", fallback="").strip()
+    if c1_dir_raw:
+        c1_dir = Path(c1_dir_raw).expanduser()
+    else:
+        apcorr_dir_raw = config.get("PHOTOMETRY", "APCORR_DIRECTORY", fallback="").strip()
+        if apcorr_dir_raw:
+            c1_dir = Path(apcorr_dir_raw).expanduser().parent / "c1"
+        else:
+            c1_dir = Path(config["PHOTOMETRY"]["FILEPATH"]).expanduser().parent / "c1"
+
+    c1_dir.mkdir(parents=True, exist_ok=True)
+
+    target_safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (target or "")) or "target"
+    out_csv = c1_dir / f"c1_details_{target_safe}_{Path(fits_name).stem}.csv"
+
+    # New UI on the same image, only for C1 stars.
+    ui_c1 = UI(hduw)
+
+    # Reuse the existing C2 overlay machinery:
+    # for C1, the "large" overlay is not 35 arcsec, but the standard 6 arcsec box.
+    ui_c1.c2_height35_pix = float(height6_pix)
+    ui_c1.c2_semi35_pix = (
+        float(trail_semi_out_pix)
+        if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0
+        else 6.0
+    )
+
+    # Useful for screenshots/debugging: keep saved A# boxes visible by default.
+    ui_c1.keep_calib_boxes = True
+
+    if srclist_path is not None:
+        try:
+            ui_c1.add_srclist_overlay(srclist_path)
+        except Exception as e:
+            print(f"[PHOT][C1] WARN: could not overlay SRCLIST: {e}")
+
+    title = (
+        f"C1 calibration — {fits_name}\n"
+        f"Select stars with A + slot. "
+        f"hbox={trail_height_pix:.2f}px -> h6={height6_pix:.2f}px; "
+        f"width≈{trail_width_pix:.2f}px"
+    )
+    try:
+        ui_c1.fig.suptitle(title, fontsize=10)
+    except Exception:
+        ui_c1.ax.set_title(title, fontsize=10)
+
+    # The selector is only used to drive the star-calibration UI.
+    # Start with the same hbox height and annulus thickness as the asteroid box.
+    selector_c1 = TrailSelector(
+        height=float(trail_height_pix),
+        semi_out=(
+            float(trail_semi_out_pix)
+            if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0
+            else 6.0
+        ),
+        finalize_on_click=False,
+    )
+
+    try:
+        ui_c1.select_trail(selector_c1)
+    except Exception as e:
+        print(f"[PHOT][C1] WARN: C1 UI failed: {e}")
+        return c1_fallback, 0.0, None
+
+    sels: dict[int, dict[str, Any]] = getattr(ui_c1, "calib_star_selections", {}) or {}
+    if not sels:
+        print(f"[PHOT][C1] WARN: no C1 stars selected; using config C1={c1_fallback:.6f}")
+        return c1_fallback, 0.0, None
+
+    header = [
+        "slot",
+        "x", "y",
+        "width_pix",
+        "theta_rad",
+        "height_h_pix",
+        "height6_pix",
+        "semi_out_pix",
+        "rate_h",
+        "rate_h_err",
+        "rate6",
+        "rate6_err",
+        "c1",
+        "c1_err",
+        "fits_name",
+        "obs_id",
+        "filter",
+        "target",
+    ]
+
+    c1_values: list[float] = []
+
+    wrote_header = not out_csv.exists()
+    with out_csv.open("a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=header)
+        if wrote_header:
+            w.writeheader()
+
+        for slot, d in sorted(sels.items()):
+            try:
+                x = float(d["x"])
+                y = float(d["y"])
+
+                # Prefer the width/theta stored by the UI selection.
+                # Fallback to the asteroid trail geometry.
+                width_pix = float(trail_width_pix)
+                theta = float(trail_theta_rad)
+
+                # For C1, force the small height to be the asteroid hbox.
+                # The standard height is height6_pix.
+                meas = compute_c1_for_star(
+                    phot=pt,
+                    x=x,
+                    y=y,
+                    width_pix=width_pix,
+                    theta_rad=theta,
+                    height_h_pix=float(trail_height_pix),
+                    height6_pix=float(height6_pix),
+                    semi_out_pix=float(trail_semi_out_pix) if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0 else 6.0,
+                    bg_center=None,
+                    debug=False,
+                )
+                meas.slot = int(slot)
+                print(
+                    f"[PHOT][C1] A{slot}: using asteroid geometry "
+                    f"width={width_pix:.2f}px theta={theta:.4f}rad "
+                    f"h={trail_height_pix:.2f}px h6={height6_pix:.2f}px"
+                )
+
+                if not np.isfinite(meas.c1) or meas.c1 <= 0:
+                    print(f"[PHOT][C1] WARN: invalid C1 in slot A{slot}: {meas.c1}")
+                    continue
+
+                c1_values.append(float(meas.c1))
+
+                w.writerow(
+                    {
+                        "slot": meas.slot,
+                        "x": x,
+                        "y": y,
+                        "width_pix": width_pix,
+                        "theta_rad": theta,
+                        "height_h_pix": trail_height_pix,
+                        "height6_pix": height6_pix,
+                        "semi_out_pix": trail_semi_out_pix,
+                        "rate_h": meas.rate_h,
+                        "rate_h_err": meas.err_h,
+                        "rate6": meas.rate6,
+                        "rate6_err": meas.err6,
+                        "c1": meas.c1,
+                        "c1_err": meas.c1_err,
+                        "fits_name": fits_name,
+                        "obs_id": observation_id,
+                        "filter": filt,
+                        "target": target,
+                    }
+                )
+
+                print(
+                    f"[PHOT][C1] A{meas.slot}: "
+                    f"C1={meas.c1:.6f} "
+                    f"(R6={meas.rate6:.6g} / Rh={meas.rate_h:.6g})"
+                )
+
+            except Exception as e:
+                print(f"[PHOT][C1] WARN: slot A{slot} failed: {e}")
+
+    if not c1_values:
+        print(f"[PHOT][C1] WARN: no valid C1 measurements; using config C1={c1_fallback:.6f}")
+        return c1_fallback, 0.0, out_csv
+
+    c1_arr = np.asarray(c1_values, dtype=float)
+    C1 = float(np.median(c1_arr))
+    C1_err = _mad_sigma(list(c1_arr))
+
+    print(f"[PHOT][C1] C1={C1:.6f}  scatter={C1_err:.6f}  N={len(c1_arr)}")
+    print(f"[PHOT][C1] Details saved: {out_csv}")
+
+    return C1, C1_err, out_csv
 
 # ---------------------------------------------------------------------
 # Main callable used by start.py
@@ -764,9 +1030,32 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     # Apply rate-domain corrections consistently (CoI, TDS, C2, apcorr)
     # -----------------------------------------------------------------
     # 0) Inputs from photometry result
+    # R_net_h = float(res.count_rate) if res.count_rate is not None else float("nan")
+    # R_net_h_err = float(res.count_rate_err) if res.count_rate_err is not None else float("nan")
+    # bkg_per_pix = float(res.bkg_per_pix) if res.bkg_per_pix is not None else 0.0
+    # A_h_eff = float(res.A_ap_eff) if res.A_ap_eff is not None else float("nan")
+
     R_net_h = float(res.count_rate) if res.count_rate is not None else float("nan")
     R_net_h_err = float(res.count_rate_err) if res.count_rate_err is not None else float("nan")
-    bkg_per_pix = float(res.bkg_per_pix) if res.bkg_per_pix is not None else 0.0
+
+    # perform_trail_photometry returns background in image units.
+    # For COUNTS images this is counts/pix, so convert to counts/s/pix
+    # before building a total rate for CoI.
+    bkg_counts_per_pix = float(res.bkg_per_pix) if res.bkg_per_pix is not None else 0.0
+
+    exptime = float(getattr(res, "exptime", np.nan))
+    if not np.isfinite(exptime) or exptime <= 0:
+        exptime = float(getattr(hduw, "texp", np.nan))
+
+    if not np.isfinite(exptime) or exptime <= 0:
+        exptime = float(hduw.hdu.header.get("EXPOSURE", np.nan))
+
+    bkg_rate_per_pix = (
+        bkg_counts_per_pix / exptime
+        if np.isfinite(bkg_counts_per_pix) and np.isfinite(exptime) and exptime > 0
+        else 0.0
+    )
+
     A_h_eff = float(res.A_ap_eff) if res.A_ap_eff is not None else float("nan")
 
     # # 1) Standard 6"-equivalent box height (full width = 12")
@@ -785,15 +1074,66 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     else:
         A6_eff = float("nan")
 
-    # 2) C1: not yet implemented interactively; default to 1.0
-    C1 = float(config.get("PHOTOMETRY", "C1", fallback="1.0") or 1.0)
+    # # 2) C1: not yet implemented interactively; default to 1.0
+    # C1 = float(config.get("PHOTOMETRY", "C1", fallback="1.0") or 1.0)
+    # R_net_6 = float(R_net_h * C1) if np.isfinite(R_net_h) else float("nan")
+    # R_net_6_err = float(R_net_h_err * C1) if np.isfinite(R_net_h_err) else float("nan")
+
+    # 2) C1: only needed if the selected trail-box height is smaller than
+    #    the standard 6 arcsec radius equivalent box height.
+    trail_width_pix_eff = float(getattr(ap_box, "w", np.nan))
+    # trail_theta_rad_eff = float(getattr(ap_box, "theta", 0.0))
+    trail_theta_rad_eff = angle_to_rad(getattr(ap_box, "theta", 0.0))
+
+    trail_semi_out_pix_eff = (
+        float((ann_box.w_out - ann_box.w_in) / 2.0)
+        if ann_box is not None
+        else float("nan")
+    )
+
+    C1, C1_err, c1_csv_path = _compute_c1_if_needed(
+        config=config,
+        hduw=hduw,
+        pt=pt,
+        srclist_path=srclist_path,
+        fits_name=fits_name,
+        observation_id=observation_id,
+        filt=filt,
+        target=target,
+        trail_width_pix=trail_width_pix_eff,
+        trail_height_pix=trail_height_pix_eff,
+        trail_theta_rad=trail_theta_rad_eff,
+        trail_semi_out_pix=trail_semi_out_pix_eff,
+        height6_pix=height6_pix,
+    )
+
     R_net_6 = float(R_net_h * C1) if np.isfinite(R_net_h) else float("nan")
     R_net_6_err = float(R_net_h_err * C1) if np.isfinite(R_net_h_err) else float("nan")
 
     # 3) Build total (source+background) rate in the 6"-equivalent aperture
+    # R_tot_6 = float("nan")
+    # if np.isfinite(R_net_6) and np.isfinite(A6_eff):
+    #     R_tot_6 = float(R_net_6 + bkg_per_pix * A6_eff)
+    # 3) Build total source+background RATE in the 6"-equivalent aperture
+    R_bkg_6 = float("nan")
     R_tot_6 = float("nan")
-    if np.isfinite(R_net_6) and np.isfinite(A6_eff):
-        R_tot_6 = float(R_net_6 + bkg_per_pix * A6_eff)
+
+    if np.isfinite(bkg_rate_per_pix) and np.isfinite(A6_eff):
+        R_bkg_6 = float(bkg_rate_per_pix * A6_eff)
+
+    if np.isfinite(R_net_6) and np.isfinite(R_bkg_6):
+        R_tot_6 = float(R_net_6 + R_bkg_6)
+
+    print(
+        f"[PHOT][COI][DBG] "
+        f"R_net_h={R_net_h:.6g} R_net_6={R_net_6:.6g} "
+        f"bkg_counts_pix={bkg_counts_per_pix:.6g} "
+        f"exptime={exptime:.3f}s "
+        f"bkg_rate_pix={bkg_rate_per_pix:.6g} "
+        f"A6_eff={A6_eff:.3f} "
+        f"R_bkg_6={R_bkg_6:.6g} "
+        f"R_tot_6={R_tot_6:.6g}"
+    )
 
     # 4) CoI correction on total rate
     hdr = hduw.hdu.header
@@ -816,8 +1156,8 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
             )
             coi_factor = float(R_tot_6_coi / R_tot_6) if R_tot_6 > 0 else float("nan")
             # back to net by subtracting background term (assumed unaffected)
-            if np.isfinite(A6_eff):
-                R_net_6_coi = float(R_tot_6_coi - bkg_per_pix * A6_eff)
+            if np.isfinite(R_bkg_6):
+                R_net_6_coi = float(R_tot_6_coi - R_bkg_6)  
             # propagate statistical uncertainty via derivative dRcorr/dRraw
             d_dR = coi_derivative_dR(
                 R_raw=R_tot_6,
@@ -885,9 +1225,12 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     row["c2"] = C2
     row["f_apcorr"] = f_apcorr
     row["c1"] = C1
+    row["c1_err"] = C1_err
+    row["c1_detail_csv"] = str(c1_csv_path) if c1_csv_path is not None else None
     row["coi_factor"] = coi_factor
     row["rate_tot_6"] = R_tot_6
     row["rate_tot_6_coi"] = R_tot_6_coi
+    row["rate_bkg_6"] = R_bkg_6
     row["count_rate_coi"] = R_net_6_coi
     row["count_rate_final"] = R_final
 

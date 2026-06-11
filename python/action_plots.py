@@ -47,6 +47,16 @@ def _safe_getattr(obj: Any, attr: str) -> Any:
     except Exception:
         return None
 
+def _rocks_lookup_key(name: str) -> str:
+    """
+    Aggressive key for matching photometry names against rocks/cache names.
+    Removes MPC number, spaces, punctuation and case.
+    """
+    n = _normalize_name(name)
+    n = n.lower().strip()
+    n = re.sub(r"^\d+\s+", "", n)
+    n = re.sub(r"[^a-z0-9]", "", n)
+    return n
 
 def _normalize_name(name: str) -> str:
     """
@@ -77,7 +87,8 @@ def _latex_header_name(c: str) -> str:
         "observation_id": "Obs. ID",
         "fits_name": "Frame",
         "count_rate": r"$c$ (ct s$^{-1}$)",
-        "mag_ab_apcorr": r"$m_{\rm AB}$",
+        "mag_ab": r"$m_{\rm AB}$",
+        "mag_ab_apcorr": r"$m_{\rm AB,apcorr}$",
     }.get(c, c)
 
 def _plots_output_dir(config: ConfigParser, phot_csv: Path) -> Path:
@@ -100,13 +111,95 @@ def save_rocks_cache(cache_path: Path, cache: dict[str, dict[str, Any]]) -> None
         json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+# def fetch_rocks_params_by_name(
+#     names: list[str],
+#     cache_path: Path,
+# ) -> dict[str, dict[str, Any]]:
+#     """
+#     Return dict: input_name -> {taxonomy_class, pv, diameter_km, rocks_name, rocks_number, _status}
+#     Uses rocks + local JSON cache.
+#     """
+#     cache = load_rocks_cache(cache_path)
+
+#     cleaned = []
+#     for n in names:
+#         n2 = _normalize_name(n)
+#         if n2:
+#             cleaned.append(n2)
+
+#     uniq = sorted(set(cleaned))
+#     to_query = [n for n in uniq if n not in cache]
+
+#     if to_query:
+#         print(f"[PLOTS][ROCKS] Querying {len(to_query)} objects via rocks (SsODNet)...")
+
+#         objs: list[Any] = []
+#         try:
+#             objs = rocks.rocks(to_query)
+#         except Exception as e:
+#             print(f"[PLOTS][ROCKS] Bulk query failed ({e}). Falling back to per-object queries.")
+#             objs = []
+#             for n in to_query:
+#                 try:
+#                     objs.extend(rocks.rocks([n]))
+#                 except Exception:
+#                     cache[n] = {"_status": "not_found"}
+
+#         # Fill cache from returned Rock objects
+#         for r in objs:
+#             if r is None:
+#                 continue
+
+#             rocks_name = _val(_safe_getattr(r, "name"))
+#             rocks_number = _val(_safe_getattr(r, "number"))
+
+#             tax = _safe_getattr(_safe_getattr(r, "taxonomy"), "class_")
+#             pv = _safe_getattr(r, "albedo")       # best-estimate pV
+#             diam = _safe_getattr(r, "diameter")   # best-estimate D (km)
+
+#             entry = {
+#                 "_status": "ok",
+#                 "rocks_name": _val(rocks_name),
+#                 "rocks_number": _val(rocks_number),
+#                 "taxonomy_class": _val(tax) if tax is not None else None,
+#                 "pv": _val(pv) if pv is not None else None,
+#                 "diameter_km": _val(diam) if diam is not None else None,
+#             }
+
+#             # Store by canonical name; also store by normalized name if it matches any pending
+#             if rocks_name:
+#                 cache[str(rocks_name)] = entry
+
+#                 # Also store by normalized returned name.
+#                 cache[_normalize_name(str(rocks_name))] = entry
+
+#         # Mark remaining as not found
+#         for n in to_query:
+#             if n not in cache:
+#                 print(f"[PLOTS][ROCKS] WARN: not resolved by rocks: {n}")
+#                 cache[n] = {"_status": "not_found"}
+
+#         save_rocks_cache(cache_path, cache)
+#         print(f"[PLOTS][ROCKS] Cache updated: {cache_path}")
+
+#     # Output keyed by the normalized input names
+#     out: dict[str, dict[str, Any]] = {}
+#     for n in uniq:
+#         out[n] = cache.get(n, {"_status": "not_found"})
+#     return out
+
 def fetch_rocks_params_by_name(
     names: list[str],
     cache_path: Path,
 ) -> dict[str, dict[str, Any]]:
     """
-    Return dict: input_name -> {taxonomy_class, pv, diameter_km, rocks_name, rocks_number, _status}
-    Uses rocks + local JSON cache.
+    Return dict keyed by normalized input name.
+
+    Robust against cache keys such as:
+    - 'Aaltje'
+    - '(677) Aaltje'
+    - '677 Aaltje'
+    - different case / punctuation
     """
     cache = load_rocks_cache(cache_path)
 
@@ -117,7 +210,33 @@ def fetch_rocks_params_by_name(
             cleaned.append(n2)
 
     uniq = sorted(set(cleaned))
-    to_query = [n for n in uniq if n not in cache]
+
+    print(f"[PLOTS][ROCKS][DBG] Requested names: {len(uniq)}")
+    print(f"[PLOTS][ROCKS][DBG] First requested names: {uniq[:15]}")
+
+    # Build aggressive lookup from whatever is already in the cache.
+    cache_by_key: dict[str, dict[str, Any]] = {}
+    for k, v in cache.items():
+        kk = _rocks_lookup_key(k)
+        if kk:
+            cache_by_key[kk] = v
+
+        rocks_name = v.get("rocks_name") if isinstance(v, dict) else None
+        if rocks_name:
+            cache_by_key[_rocks_lookup_key(str(rocks_name))] = v
+
+    def _has_good_cache_entry(n: str) -> bool:
+        entry = cache.get(n) or cache_by_key.get(_rocks_lookup_key(n))
+        if not isinstance(entry, dict):
+            return False
+
+        # Re-query not_found entries. They may come from a previous bad run.
+        if entry.get("_status") == "not_found":
+            return False
+
+        return True
+
+    to_query = [n for n in uniq if not _has_good_cache_entry(n)]
 
     if to_query:
         print(f"[PLOTS][ROCKS] Querying {len(to_query)} objects via rocks (SsODNet)...")
@@ -130,11 +249,12 @@ def fetch_rocks_params_by_name(
             objs = []
             for n in to_query:
                 try:
-                    objs.extend(rocks.rocks([n]))
+                    rr = rocks.rocks([n])
+                    objs.extend(rr)
                 except Exception:
                     cache[n] = {"_status": "not_found"}
 
-        # Fill cache from returned Rock objects
+        # Store returned objects both by rocks canonical name and by requested name
         for r in objs:
             if r is None:
                 continue
@@ -143,8 +263,8 @@ def fetch_rocks_params_by_name(
             rocks_number = _val(_safe_getattr(r, "number"))
 
             tax = _safe_getattr(_safe_getattr(r, "taxonomy"), "class_")
-            pv = _safe_getattr(r, "albedo")       # best-estimate pV
-            diam = _safe_getattr(r, "diameter")   # best-estimate D (km)
+            pv = _safe_getattr(r, "albedo")
+            diam = _safe_getattr(r, "diameter")
 
             entry = {
                 "_status": "ok",
@@ -155,47 +275,116 @@ def fetch_rocks_params_by_name(
                 "diameter_km": _val(diam) if diam is not None else None,
             }
 
-            # Store by canonical name; also store by normalized name if it matches any pending
             if rocks_name:
                 cache[str(rocks_name)] = entry
+                cache_by_key[_rocks_lookup_key(str(rocks_name))] = entry
 
-                # Also store by normalized returned name.
-                cache[_normalize_name(str(rocks_name))] = entry
+            # Attach this result to any pending requested name with same lookup key.
+            rkey = _rocks_lookup_key(str(rocks_name or ""))
+            for n in to_query:
+                if _rocks_lookup_key(n) == rkey:
+                    cache[n] = entry
+                    cache_by_key[_rocks_lookup_key(n)] = entry
 
-        # Mark remaining as not found
+        # Mark only genuinely unresolved names
         for n in to_query:
-            if n not in cache:
-                print(f"[PLOTS][ROCKS] WARN: not resolved by rocks: {n}")
+            if n not in cache and _rocks_lookup_key(n) not in cache_by_key:
                 cache[n] = {"_status": "not_found"}
 
         save_rocks_cache(cache_path, cache)
         print(f"[PLOTS][ROCKS] Cache updated: {cache_path}")
 
-    # Output keyed by the normalized input names
+    # Output keyed exactly by the normalized input names
     out: dict[str, dict[str, Any]] = {}
     for n in uniq:
-        out[n] = cache.get(n, {"_status": "not_found"})
+        entry = cache.get(n)
+        if not entry:
+            entry = cache_by_key.get(_rocks_lookup_key(n))
+        if not entry:
+            entry = {"_status": "not_found"}
+        out[n] = entry
+
     return out
+def _get_rocks_info(
+    rocks_info: dict[str, dict[str, Any]],
+    name: str,
+) -> dict[str, Any]:
+    """
+    Robust lookup in rocks_info.
+    """
+    if name in rocks_info:
+        return rocks_info[name]
 
+    key = _rocks_lookup_key(name)
 
+    for k, v in rocks_info.items():
+        if _rocks_lookup_key(k) == key:
+            return v
+
+        rocks_name = v.get("rocks_name") if isinstance(v, dict) else None
+        if rocks_name and _rocks_lookup_key(str(rocks_name)) == key:
+            return v
+
+    return {}
+
+# def _taxonomy_bucket(tax_class: Optional[str]) -> str:
+#     """
+#     GALEX alignment (coarse):
+#     - 'C' bucket: C-complex (C/B/G/F etc) -> we treat anything starting with 'C' as C;
+#       you can extend later with Bus/DeMeo mapping if needed.
+#     - 'S' bucket: S-complex (S, Sa, Sq, Sr, Sv...)
+#     - 'OTHER' for others (D, X, V, etc.)
+#     - 'UNK' if None/empty
+#     """
+#     if not tax_class:
+#         return "UNK"
+#     t = str(tax_class).strip().upper()
+#     if t.startswith("C"):
+#         return "C"
+#     if t.startswith("S"):
+#         return "S"
+#     return "OTHER"
 def _taxonomy_bucket(tax_class: Optional[str]) -> str:
     """
-    GALEX alignment (coarse):
-    - 'C' bucket: C-complex (C/B/G/F etc) -> we treat anything starting with 'C' as C;
-      you can extend later with Bus/DeMeo mapping if needed.
-    - 'S' bucket: S-complex (S, Sa, Sq, Sr, Sv...)
-    - 'OTHER' for others (D, X, V, etc.)
-    - 'UNK' if None/empty
+    Coarse taxonomic family bucket.
+
+    Main families are kept separated instead of collapsing everything
+    into C/S/OTHER.
     """
     if not tax_class:
         return "UNK"
+
     t = str(tax_class).strip().upper()
+    if not t:
+        return "UNK"
+
+    # Remove common separators / uncertainty markers
+    t = t.replace(":", "").replace("?", "").strip()
+
+    # Large taxonomic families.
+    # Order matters for subclasses such as SQ, SA, XC, etc.
     if t.startswith("C"):
         return "C"
     if t.startswith("S"):
         return "S"
-    return "OTHER"
+    if t.startswith("X"):
+        return "X"
+    if t.startswith("D"):
+        return "D"
+    if t.startswith("V"):
+        return "V"
+    if t.startswith("B"):
+        return "B"
+    if t.startswith("A"):
+        return "A"
+    if t.startswith("L"):
+        return "L"
+    if t.startswith("K"):
+        return "K"
+    if t.startswith("Q"):
+        return "Q"
 
+    return "OTHER"
 
 # -----------------------------
 # Main action
@@ -207,68 +396,51 @@ def action_plots(config: ConfigParser) -> Path:
 
     out_dir = _plots_output_dir(config, phot_csv)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_png = out_dir / "color_diagram_mag_ab_apcorr_vs_vmag_taxonomy.png"
+    out_png = out_dir / "color_diagram_mag_ab_vs_vmag_taxonomy.png"
     cache_path = out_dir / "rocks_cache.json"
 
-    # latex_columns = [
-    #     "target_name",
-    #     "observation_id",
-    #     "fits_name",
-    #     "count_rate",
-    #     "count_rate_err",
-    #     "trail_height_pix",
-    #     "mag_ab_apcorr",
-    #     "mag_ab_apcorr_err",
-    #     "v_mag_1",
-    #     "mlim_obs",
-    # ]
 
     latex_columns = [
         "target_name",
         "observation_id",
         "fits_name",
         "count_rate",
+        "mag_ab",
         "mag_ab_apcorr",
     ]
 
     out_tex = out_dir / "photometry_output_table.tex"
-    # export_photometry_csv_to_latex(
-    #     phot_csv=phot_csv,
-    #     out_tex=out_tex,
-    #     columns=latex_columns,
-    #     caption="Photometry output exported from the pipeline.",
-    #     label="tab:photometry_output",
-    #     max_rows=None,  # o pon un número si quieres truncar
-    # )
 
+        # 1) Read CSV and accumulate per-object colour
+    # Main science magnitude: mag_ab.
+    # mag_ab_apcorr remains available for comparison/table, but is not required for the plot.
+    mag_col = "mag_ab"
+    mag_err_col = "mag_err"
 
-    # 1) Read CSV and accumulate per-object color
     with phot_csv.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fieldnames = set(reader.fieldnames or [])
 
-        # Name column (your current CSV uses target_name)
+        # Name column
         if "target_name" in fieldnames:
             name_col = "target_name"
         elif "sso_name" in fieldnames:
             name_col = "sso_name"
         else:
             raise ValueError(
-                f"Missing object name column. Need 'target_name' or 'sso_name'. Found: {reader.fieldnames}"
+                f"Missing object name column. Need 'target_name' or 'sso_name'. "
+                f"Found: {reader.fieldnames}"
             )
 
-        required = {"v_mag_1", "mag_ab_apcorr"}
+        required = {"v_mag_1", mag_col}
         missing = required - fieldnames
         if missing:
             raise ValueError(
-                f"Missing required columns in {phot_csv.name}: {sorted(missing)}. Found: {reader.fieldnames}"
+                f"Missing required columns in {phot_csv.name}: {sorted(missing)}. "
+                f"Found: {reader.fieldnames}"
             )
 
-        sums_v: dict[str, float] = {}
-        sums_color: dict[str, float] = {}
-        counts: dict[str, int] = {}
-
-        all_names: list[str] = []
+        measurements: dict[str, list[dict[str, Optional[float]]]] = {}
         all_table_names: list[str] = []
 
         total_rows = 0
@@ -276,59 +448,77 @@ def action_plots(config: ConfigParser) -> Path:
 
         for row in reader:
             total_rows += 1
-            # name_raw = (row.get(name_col) or "").strip()
-            # name = _normalize_name(name_raw)
-            # if not name:
-            #     continue
 
-            # v = _to_float(row.get("v_mag_1"))
-            # y = _to_float(row.get("mag_ab_apcorr"))
-            # if v is None or y is None:
-            #     continue
             name_raw = (row.get(name_col) or "").strip()
             name = _normalize_name(name_raw)
             if not name:
                 continue
 
-            # For LaTeX/table name resolution: include every object in the CSV,
-            # even if the row is not valid for the color plot.
+            # Keep every object for table/name diagnostics, even if not plottable.
             all_table_names.append(name)
 
             v = _to_float(row.get("v_mag_1"))
-            y = _to_float(row.get("mag_ab_apcorr"))
+            y = _to_float(row.get(mag_col))
+            yerr = _to_float(row.get(mag_err_col))
+
+            # Optional V uncertainty, if added later.
+            xerr = (
+                _to_float(row.get("v_mag_1_err"))
+                or _to_float(row.get("v_mag_err"))
+                or _to_float(row.get("v_err"))
+            )
+
             if v is None or y is None:
+                print(
+                    f"[PLOTS][SKIP] {name}: "
+                    f"v_mag_1={row.get('v_mag_1')!r}, "
+                    f"{mag_col}={row.get(mag_col)!r}"
+                )
                 continue
 
             valid_rows += 1
-            color = y - v  # (UV - V)
 
-            sums_v[name] = sums_v.get(name, 0.0) + v
-            sums_color[name] = sums_color.get(name, 0.0) + color
-            counts[name] = counts.get(name, 0) + 1
-            all_names.append(name)
+            measurements.setdefault(name, []).append(
+                {
+                    "v": v,
+                    "y": y,
+                    "yerr": yerr,
+                    "xerr": xerr,
+                    "color": y - v,
+                }
+            )
 
-    if not counts:
-        raise ValueError(
-            f"No valid rows to plot. Need numeric v_mag_1 and mag_ab_apcorr in {phot_csv}"
-        )
+        if not measurements:
+            raise ValueError(
+                f"No valid rows to plot. Need numeric v_mag_1 and {mag_col} in {phot_csv}"
+            )
 
-        print(f"[PLOTS][ROCKS][DBG] names for table lookup: {len(set(all_table_names))}")
+    print(f"[PLOTS][ROCKS][DBG] names for table lookup: {len(set(all_table_names))}")
+    
     for test_name in ["Astrometria", "Potomac", "Sarpedon"]:
         print(f"[PLOTS][ROCKS][DBG] {test_name} in all_table_names? {test_name in set(all_table_names)}")
     
     # 2) Fetch taxonomy/albedo/diameter via rocks (cached)
-    rocks_info = fetch_rocks_params_by_name(all_table_names, cache_path)
+    all_names = sorted(measurements.keys())
 
-    # export_photometry_csv_to_latex(
-    #     phot_csv=phot_csv,
-    #     out_tex=out_tex,
-    #     columns=latex_columns,
-    #     caption="Photometry output exported from the pipeline.",
-    #     label="tab:photometry_output",
-    #     max_rows=None,
-    #     rocks_cache_path=cache_path,
-    #     landscape=True,
-    # )
+    print(f"[PLOTS][DBG] Names sent to rocks: {len(all_names)}")
+    print("[PLOTS][DBG] First names:", all_names[:10])
+    
+    # Use exactly the object names that survived the photometry filters.
+    all_names = sorted(measurements.keys())
+
+    print(f"[PLOTS][DBG] Unique valid object names: {len(all_names)}")
+    print(f"[PLOTS][DBG] First valid object names: {all_names[:15]}")
+
+    rocks_info = fetch_rocks_params_by_name(
+        names=all_names,
+        cache_path=cache_path,
+    )
+
+    print(f"[PLOTS][DBG] rocks_info entries: {len(rocks_info)}")
+    # rocks_info = fetch_rocks_params_by_name(all_table_names, cache_path)
+
+
     export_photometry_csv_to_latex(
     phot_csv=phot_csv,
     out_tex=out_tex,
@@ -341,22 +531,85 @@ def action_plots(config: ConfigParser) -> Path:
     )
 
     # 3) Build final one-point-per-object arrays + taxonomy buckets
+    # 3) Build final one-point-per-object arrays + taxonomy buckets
     xs: list[float] = []
     ys: list[float] = []
+    xerrs: list[Optional[float]] = []
+    yerrs: list[Optional[float]] = []
+    uv_minus_v: list[float] = []
     buckets: list[str] = []
+    tax_labels: list[str] = []
 
     resolved_tax = 0
     resolved_pv = 0
     resolved_d = 0
 
-    for name, n in counts.items():
-        v_mean = sums_v[name] / n
-        color_mean = sums_color[name] / n
 
-        x = v_mean
-        y = v_mean + color_mean
+    def _mean(vals: list[float]) -> float:
+        return float(np.mean(np.array(vals, dtype=float)))
 
-        info = rocks_info.get(name, {})
+
+    def _stderr(vals: list[float]) -> Optional[float]:
+        if len(vals) < 2:
+            return None
+        arr = np.array(vals, dtype=float)
+        return float(np.std(arr, ddof=1) / math.sqrt(len(arr)))
+
+
+    def _weighted_mean_and_err(
+        vals: list[float],
+        errs: list[Optional[float]],
+    ) -> tuple[float, Optional[float]]:
+        """
+        Weighted mean using sigma if available.
+        If no valid uncertainties exist, use simple mean and standard error.
+        """
+        good_vals = []
+        good_w = []
+
+        for v, e in zip(vals, errs):
+            if e is not None and math.isfinite(e) and e > 0:
+                good_vals.append(v)
+                good_w.append(1.0 / (e * e))
+
+        if good_vals:
+            v_arr = np.array(good_vals, dtype=float)
+            w_arr = np.array(good_w, dtype=float)
+            mean = float(np.sum(w_arr * v_arr) / np.sum(w_arr))
+            err = float(math.sqrt(1.0 / np.sum(w_arr)))
+            return mean, err
+
+        mean = _mean(vals)
+        err = _stderr(vals)
+        return mean, err
+
+
+    for name, rows_for_obj in measurements.items():
+        v_vals = [r["v"] for r in rows_for_obj if r["v"] is not None]
+        y_vals = [r["y"] for r in rows_for_obj if r["y"] is not None]
+        yerr_vals = [r["yerr"] for r in rows_for_obj if r["y"] is not None]
+        xerr_vals = [r["xerr"] for r in rows_for_obj if r["v"] is not None]
+
+        if not v_vals or not y_vals:
+            continue
+
+        x = _mean(v_vals)
+        xerr_from_scatter = _stderr(v_vals)
+
+        valid_xerrs = [
+            e for e in xerr_vals
+            if e is not None and math.isfinite(e) and e > 0
+        ]
+        if valid_xerrs:
+            xerr = float(math.sqrt(np.sum(np.array(valid_xerrs) ** 2)) / len(valid_xerrs))
+        else:
+            xerr = xerr_from_scatter
+
+        y, yerr = _weighted_mean_and_err(y_vals, yerr_vals)
+
+        color_mean = y - x
+
+        info = _get_rocks_info(rocks_info, name)
         tax_class = info.get("taxonomy_class")
         pv = info.get("pv")
         d_km = info.get("diameter_km")
@@ -370,77 +623,242 @@ def action_plots(config: ConfigParser) -> Path:
 
         xs.append(x)
         ys.append(y)
+        xerrs.append(xerr)
+        yerrs.append(yerr)
+        uv_minus_v.append(color_mean)
         buckets.append(_taxonomy_bucket(tax_class))
+        tax_labels.append(str(tax_class or "UNK"))
 
-        colors: list[float] = []
-        colors.append(color_mean)  # UV−V
+    export_taxonomy_colour_summary_tables(
+        output_dir=out_dir,
+        xs=xs,
+        ys=ys,
+        yerrs=yerrs,
+        buckets=buckets,
+    )
+    # # 4) Plot grouped by taxonomic family, with error bars
+    # plt.figure(figsize=(7.0, 5.5))
 
+    # order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
+    # plotted = 0
 
-    # 4) Plot grouped by bucket (matplotlib assigns default colors automatically)
-    plt.figure()
+    # for b in order:
+    #     idx = [i for i, bb in enumerate(buckets) if bb == b]
+    #     if not idx:
+    #         continue
 
-    order = ["C", "S", "OTHER", "UNK"]
+    #     xb = [xs[i] for i in idx]
+    #     yb = [ys[i] for i in idx]
+
+    #     xeb = [xerrs[i] if xerrs[i] is not None else 0.0 for i in idx]
+    #     yeb = [yerrs[i] if yerrs[i] is not None else 0.0 for i in idx]
+
+    #     # Error bars + markers. Matplotlib assigns default colors.
+    #     container = plt.errorbar(
+    #         xb,
+    #         yb,
+    #         xerr=xeb if any(e > 0 for e in xeb) else None,
+    #         yerr=yeb if any(e > 0 for e in yeb) else None,
+    #         fmt="o",
+    #         markersize=4,
+    #         capsize=2,
+    #         elinewidth=0.8,
+    #         linewidth=0.8,
+    #         label=b,
+    #         alpha=0.85,
+    #     )
+
+    #     plotted += len(xb)
+
+    #     fit = fit_line(xb, yb, yeb)
+
+    #     if fit is not None:
+    #         m, c, m_err, c_err = fit
+
+    #         # Extend family slopes across the full x-axis range for readability.
+    #         xx = np.linspace(min(xs), max(xs), 100)
+    #         yy = m * xx + c
+
+    #         # Use the same color as the plotted family.
+    #         try:
+    #             fit_color = container.lines[0].get_color()
+    #         except Exception:
+    #             fit_color = None
+
+    #         plt.plot(xx, yy, linestyle="-", linewidth=1.0, color=fit_color)
+
+    #         if math.isfinite(m_err) and math.isfinite(c_err):
+    #             print(
+    #                 f"[PLOTS][FIT] {b}: "
+    #                 f"slope={m:.4f}±{m_err:.4f}, "
+    #                 f"intercept={c:.4f}±{c_err:.4f}, "
+    #                 f"N={len(xb)}"
+    #             )
+    #         else:
+    #             print(
+    #                 f"[PLOTS][FIT] {b}: "
+    #                 f"slope={m:.4f}, intercept={c:.4f}, N={len(xb)}"
+    #             )
+    #     else:
+    #         print(f"[PLOTS][FIT] {b}: skipped (N={len(xb)} or insufficient valid errors)")
+
+    # 4) Plot grouped by taxonomic family, with error bars
+    plt.figure(figsize=(7.0, 5.5))
+
+    order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
     plotted = 0
+
     for b in order:
-        xb = [x for x, bb in zip(xs, buckets) if bb == b]
-        yb = [y for y, bb in zip(ys, buckets) if bb == b]
-        if not xb:
+        idx = [i for i, bb in enumerate(buckets) if bb == b]
+        if not idx:
             continue
-        plt.scatter(xb, yb, s=20, label=b)
+
+        xb = [xs[i] for i in idx]
+        yb = [ys[i] for i in idx]
+
+        xeb = [xerrs[i] if xerrs[i] is not None else 0.0 for i in idx]
+        yeb = [yerrs[i] if yerrs[i] is not None else 0.0 for i in idx]
+
+        has_xerr = any(e > 0 for e in xeb)
+        has_yerr = any(e > 0 for e in yeb)
+
+        # ------------------------------------------------------------
+        # Plot points
+        # ------------------------------------------------------------
+        if b == "UNK":
+            # Unknown taxonomies: grey diagnostic points only.
+            container = plt.errorbar(
+                xb,
+                yb,
+                xerr=xeb if has_xerr else None,
+                yerr=yeb if has_yerr else None,
+                fmt="o",
+                markersize=4,
+                capsize=2,
+                elinewidth=0.8,
+                linewidth=0.8,
+                label="UNK",
+                alpha=0.55,
+                color="0.65",
+                ecolor="0.65",
+                markerfacecolor="0.65",
+                markeredgecolor="0.65",
+            )
+
+            plotted += len(xb)
+            print(f"[PLOTS][FIT] UNK: skipped; unknown taxonomy")
+            continue
+
+        # Known taxonomic families: default matplotlib colours.
+        container = plt.errorbar(
+            xb,
+            yb,
+            xerr=xeb if has_xerr else None,
+            yerr=yeb if has_yerr else None,
+            fmt="o",
+            markersize=4,
+            capsize=2,
+            elinewidth=0.8,
+            linewidth=0.8,
+            label=b,
+            alpha=0.85,
+        )
+
         plotted += len(xb)
 
+        # ------------------------------------------------------------
+        # Weighted family fit
+        # ------------------------------------------------------------
+        fit = fit_line(xb, yb, yeb)
 
-        c_colors = [col for col, bb in zip(colors, buckets) if bb == "C"]
-        s_colors = [col for col, bb in zip(colors, buckets) if bb == "S"]
+        if fit is None:
+            print(f"[PLOTS][FIT] {b}: skipped (N={len(xb)} or insufficient valid errors)")
+            continue
 
-        if len(c_colors) >= 1 and len(s_colors) >= 1:
-            muC, sC = float(np.mean(c_colors)), float(np.std(c_colors, ddof=1))
-            muS, sS = float(np.mean(s_colors)), float(np.std(s_colors, ddof=1))
+        m, c, m_err, c_err = fit
+
+        xx = np.linspace(min(xs), max(xs), 100)
+        yy = m * xx + c
+
+        try:
+            fit_color = container.lines[0].get_color()
+        except Exception:
+            fit_color = None
+
+        plt.plot(
+            xx,
+            yy,
+            linestyle="-",
+            linewidth=1.0,
+            color=fit_color,
+        )
+
+        if math.isfinite(m_err) and math.isfinite(c_err):
+            print(
+                f"[PLOTS][FIT] {b}: "
+                f"slope={m:.4f}±{m_err:.4f}, "
+                f"intercept={c:.4f}±{c_err:.4f}, "
+                f"N={len(xb)}"
+            )
+        else:
+            print(
+                f"[PLOTS][FIT] {b}: "
+                f"slope={m:.4f}, intercept={c:.4f}, N={len(xb)}"
+            )
+
+    # Optional C/S UV−V threshold estimate using object-level colours.
+    c_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "C"]
+    s_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "S"]
+
+    if len(c_colors) >= 2 and len(s_colors) >= 2:
+        muC = float(np.mean(c_colors))
+        sC = float(np.std(c_colors, ddof=1))
+        muS = float(np.mean(s_colors))
+        sS = float(np.std(s_colors, ddof=1))
+
+        if sC > 0 and sS > 0:
             thr = gaussian_intersection(muC, sC, muS, sS)
-            print(f"[PLOTS][THR] UV−V: muC={muC:.3f}±{sC:.3f}, muS={muS:.3f}±{sS:.3f}, threshold≈{thr:.3f}")
-
-            # opcional: dibuja líneas de “color constante” en el diagrama y vs x
             if thr is not None:
-                # y = x + thr
-                xx = np.linspace(min(xs), max(xs), 100)
-                yy = xx + thr
-                plt.plot(xx, yy, linestyle="--")
-        else:
-            print("[PLOTS][THR] Not enough C/S points to estimate threshold robustly.")
+                print(
+                    f"[PLOTS][THR] UV−V: "
+                    f"muC={muC:.3f}±{sC:.3f}, "
+                    f"muS={muS:.3f}±{sS:.3f}, "
+                    f"threshold≈{thr:.3f}"
+                )
 
-        # fit = fit_line(xb, yb)
-
-        # if fit is not None:
-        #     m, c = fit
-        #     xx = np.linspace(min(xb), max(xb), 50)
-        #     yy = m * xx + c
-        #     plt.plot(xx, yy, linestyle="-")  # color por defecto
-        #     print(f"[PLOTS][FIT] {b}: slope={m:.4f}, intercept={c:.4f}, N={len(xb)}")
-        # else:
-        #     print(f"[PLOTS][FIT] {b}: not enough points (N={len(xb)})")
-        if b in {"C", "S"}:
-            fit = fit_line(xb, yb)
-
-            if fit is not None:
-                m, c = fit
-                xx = np.linspace(min(xb), max(xb), 50)
-                yy = m * xx + c
-                plt.plot(xx, yy, linestyle="-")
-                print(f"[PLOTS][FIT] {b}: slope={m:.4f}, intercept={c:.4f}, N={len(xb)}")
+                # xx = np.linspace(min(xs), max(xs), 100)
+                # yy = xx + thr
+                # plt.plot(
+                #     xx,
+                #     yy,
+                #     linestyle="--",
+                #     linewidth=0.9,
+                #     label="C/S UV−V threshold",
+                # )
             else:
-                print(f"[PLOTS][FIT] {b}: not enough points (N={len(xb)})")
+                print(
+                    f"[PLOTS][THR] UV−V: "
+                    f"muC={muC:.3f}±{sC:.3f}, "
+                    f"muS={muS:.3f}±{sS:.3f}, "
+                    f"threshold skipped; Gaussian intersection returned None."
+                )
         else:
-            print(f"[PLOTS][FIT] {b}: skipped")
-
-    plt.xlabel("v_mag_1")
-    plt.ylabel("mag_ab_apcorr")
-    plt.title("mag_ab_apcorr vs v_mag_1 (1 point per object; mean UV−V; rocks taxonomy)")
+            print("[PLOTS][THR] C/S scatter is zero; threshold skipped.")
+    else:
+        print("[PLOTS][THR] Not enough C/S points to estimate threshold robustly.")
+        
+    # plt.xlabel("v_mag_1")
+    # plt.ylabel("mag_ab_apcorr")
+    # plt.title("mag_ab_apcorr vs v_mag_1 (1 point per object; mean UV−V; rocks taxonomy)")
+    plt.xlabel(r"$V_{\rm pred}$")
+    plt.ylabel(r"$m_{\rm UVW1,AB}$")
+    plt.title(r"UVW1 AB magnitude vs predicted $V$ by taxonomic family")
     plt.legend()
 
     # y=x reference (color=0)
-    mn = min(min(xs), min(ys))
-    mx = max(max(xs), max(ys))
-    plt.plot([mn, mx], [mn, mx], linestyle="--")
+    # mn = min(min(xs), min(ys))
+    # mx = max(max(xs), max(ys))
+    # plt.plot([mn, mx], [mn, mx], linestyle="--")
 
     plt.tight_layout()
     plt.savefig(out_png, dpi=200)
@@ -448,8 +866,13 @@ def action_plots(config: ConfigParser) -> Path:
 
     print(f"[PLOTS] Read: {phot_csv}")
     print(f"[PLOTS] Total rows: {total_rows} | Valid rows: {valid_rows}")
-    print(f"[PLOTS] Objects plotted: {len(counts)} (points: {plotted})")
-    print(f"[PLOTS] rocks resolved: taxonomy={resolved_tax}/{len(counts)}, pV={resolved_pv}/{len(counts)}, D={resolved_d}/{len(counts)}")
+    print(f"[PLOTS] Objects plotted: {len(measurements)} (points: {plotted})")
+    print(
+        f"[PLOTS] rocks resolved: "
+        f"taxonomy={resolved_tax}/{len(measurements)}, "
+        f"pV={resolved_pv}/{len(measurements)}, "
+        f"D={resolved_d}/{len(measurements)}"
+    )
     print(f"[PLOTS] Saved: {out_png}")
 
     return out_png
@@ -462,14 +885,74 @@ def _load_config(config_path: Path) -> ConfigParser:
         raise FileNotFoundError(f"Could not read config file: {config_path}")
     return cfg
 
-def fit_line(x: list[float], y: list[float]) -> Optional[tuple[float, float]]:
+# def fit_line(x: list[float], y: list[float]) -> Optional[tuple[float, float]]:
+#     if len(x) < 3:
+#         return None
+#     xarr = np.array(x, dtype=float)
+#     yarr = np.array(y, dtype=float)
+#     m, b = np.polyfit(xarr, yarr, 1)  # y = m x + b
+#     return float(m), float(b)
+
+def fit_line(
+    x: list[float],
+    y: list[float],
+    yerr: Optional[list[Optional[float]]] = None,
+) -> Optional[tuple[float, float, float, float]]:
+    """
+    Linear fit y = m*x + b.
+
+    If yerr is available, perform weighted least squares with weights 1/sigma_y.
+    Returns:
+        slope, intercept, slope_err, intercept_err
+    """
     if len(x) < 3:
         return None
+
     xarr = np.array(x, dtype=float)
     yarr = np.array(y, dtype=float)
-    m, b = np.polyfit(xarr, yarr, 1)  # y = m x + b
-    return float(m), float(b)
 
+    finite = np.isfinite(xarr) & np.isfinite(yarr)
+
+    warr = None
+    if yerr is not None:
+        earr = np.array(
+            [
+                np.nan if e is None else float(e)
+                for e in yerr
+            ],
+            dtype=float,
+        )
+        finite &= np.isfinite(earr) & (earr > 0)
+
+    xarr = xarr[finite]
+    yarr = yarr[finite]
+
+    if len(xarr) < 3:
+        return None
+
+    if yerr is not None:
+        earr = earr[finite]
+        warr = 1.0 / earr
+
+    try:
+        if warr is not None:
+            coeff, cov = np.polyfit(xarr, yarr, 1, w=warr, cov=True)
+        else:
+            coeff, cov = np.polyfit(xarr, yarr, 1, cov=True)
+
+        m, b = coeff
+        m_err = math.sqrt(cov[0, 0]) if cov is not None else math.nan
+        b_err = math.sqrt(cov[1, 1]) if cov is not None else math.nan
+
+        return float(m), float(b), float(m_err), float(b_err)
+
+    except Exception:
+        if warr is not None:
+            m, b = np.polyfit(xarr, yarr, 1, w=warr)
+        else:
+            m, b = np.polyfit(xarr, yarr, 1)
+
+        return float(m), float(b), math.nan, math.nan
 
 def gaussian_intersection(mu1, s1, mu2, s2):
     # Resuelve N(mu1,s1)=N(mu2,s2). Devuelve 1 o 2 soluciones; elegimos la que cae entre medias.
@@ -567,14 +1050,6 @@ def _format_value_err_pair(value: Optional[float], err: Optional[float], sig_err
     return (val_s, err_s)
 
 
-# def export_photometry_csv_to_latex(
-#     phot_csv: Path,
-#     out_tex: Path,
-#     columns: list[str],
-#     caption: str = "Photometry results.",
-#     label: str = "tab:photometry",
-#     max_rows: Optional[int] = None,
-# ) -> None:
 def export_photometry_csv_to_latex(
     phot_csv: Path,
     out_tex: Path,
@@ -663,14 +1138,16 @@ def export_photometry_csv_to_latex(
                 # Rows
         for row in reader:
             # Parse numeric pairs we want to format consistently
-            # cr = _to_float(row.get("count_rate")) if "count_rate" in columns else None
-            # cr_err = _to_float(row.get("count_rate_err")) if "count_rate_err" in columns else None
-            # mab = _to_float(row.get("mag_ab_apcorr")) if "mag_ab_apcorr" in columns else None
-            # mab_err = _to_float(row.get("mag_ab_apcorr_err")) if "mag_ab_apcorr_err" in columns else None
             cr = _to_float(row.get("count_rate"))
             cr_err = _to_float(row.get("count_rate_err"))
-            mab = _to_float(row.get("mag_ab_apcorr"))
-            mab_err = _to_float(row.get("mag_ab_apcorr_err"))
+            mab = _to_float(row.get("mag_ab"))
+            mab_err = _to_float(row.get("mag_err"))
+
+            mab_ap = _to_float(row.get("mag_ab_apcorr"))
+            mab_ap_err = _to_float(row.get("mag_ab_apcorr_err"))
+
+            mab_s, mab_err_s = _format_value_err_pair(mab, mab_err, sig_err=2)
+            mab_ap_s, mab_ap_err_s = _format_value_err_pair(mab_ap, mab_ap_err, sig_err=2)
 
             cr_s, cr_err_s = _format_value_err_pair(cr, cr_err, sig_err=2)
             mab_s, mab_err_s = _format_value_err_pair(mab, mab_err, sig_err=2)
@@ -678,45 +1155,12 @@ def export_photometry_csv_to_latex(
             vals = []
             for c in columns:
                 # Apply special formatting for the two value/error pairs
-                # if c == "count_rate":
-                #     v_str = cr_s
-                # elif c == "count_rate_err":
-                #     v_str = cr_err_s
-                # elif c == "mag_ab_apcorr":
-                #     v_str = mab_s
-                # elif c == "mag_ab_apcorr_err":
-                #     v_str = mab_err_s
-                # else:
-                #     v = row.get(c, "")
-                #     if v is None:
-                #         v = ""
-                #     v_str = str(v).strip()
-                #     if v_str.lower() in {"none", "nan", "null"}:
-                #         v_str = ""
-
-                #     if c == "fits_name" and v_str:
-                #         m = re.search(r"(OMS\d{3})", v_str)
-                #         if m:
-                #             v_str = m.group(1)
-
-                #     if c in {"target_name", "sso_name"} and v_str:
-                #         name_norm = _normalize_name(v_str)
-                #         info = rocks_cache.get(name_norm, {})
-                #         number = info.get("rocks_number")
-
-                #         if number not in (None, "", "None", "nan"):
-                #             try:
-                #                 number_s = str(int(float(number)))
-                #                 v_str = f"({number_s}) {name_norm}"
-                #             except Exception:
-                #                 v_str = name_norm
-                #         else:
-                #             v_str = name_norm
-
                 if c == "count_rate":
                     v_str = rf"${cr_s} \pm {cr_err_s}$" if cr_s and cr_err_s else cr_s
-                elif c == "mag_ab_apcorr":
+                elif c == "mag_ab":
                     v_str = rf"${mab_s} \pm {mab_err_s}$" if mab_s and mab_err_s else mab_s
+                elif c == "mag_ab_apcorr":
+                    v_str = rf"${mab_ap_s} \pm {mab_ap_err_s}$" if mab_ap_s and mab_ap_err_s else mab_ap_s
                 else:
                     v = row.get(c, "")
                     if v is None:
@@ -743,8 +1187,8 @@ def export_photometry_csv_to_latex(
                                 v_str = name_norm
                         else:
                             v_str = name_norm
-                if c in {"count_rate", "mag_ab_apcorr"}:
-                        vals.append(v_str)
+                if c in {"count_rate", "mag_ab", "mag_ab_apcorr"}:
+                    vals.append(v_str)
                 else:
                     vals.append(_latex_escape(v_str))
 
@@ -762,7 +1206,175 @@ def export_photometry_csv_to_latex(
     out_tex.write_text("\n".join(lines), encoding="utf-8")
     print(f"[PLOTS][LATEX] Saved: {out_tex}")
 
+def export_taxonomy_colour_summary_tables(
+    output_dir: Path,
+    xs: list[float],
+    ys: list[float],
+    yerrs: list[Optional[float]],
+    buckets: list[str],
+) -> None:
+    """
+    Export summary table of UVW1−V colour by taxonomic family.
 
+    Outputs:
+      - taxonomy_colour_summary.csv
+      - taxonomy_colour_summary.tex
+
+    Notes:
+      - UVW1−V = mag_ab_apcorr - v_mag_1
+      - The weighted mean uses mag_ab_apcorr_err as sigma, since V errors
+        are currently not propagated in the pipeline.
+      - The unweighted std reflects object-to-object scatter.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rows: list[dict[str, Any]] = []
+
+    order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
+
+    for fam in order:
+        idx = [i for i, b in enumerate(buckets) if b == fam]
+        if not idx:
+            continue
+
+        v_vals = np.array([xs[i] for i in idx], dtype=float)
+        uv_vals = np.array([ys[i] for i in idx], dtype=float)
+        col_vals = uv_vals - v_vals
+
+        err_vals = np.array(
+            [
+                np.nan if yerrs[i] is None else float(yerrs[i])
+                for i in idx
+            ],
+            dtype=float,
+        )
+
+        n = len(idx)
+
+        mean_v = float(np.mean(v_vals))
+        mean_uv = float(np.mean(uv_vals))
+        mean_col = float(np.mean(col_vals))
+
+        if n >= 2:
+            std_col = float(np.std(col_vals, ddof=1))
+            sem_col = float(std_col / math.sqrt(n))
+        else:
+            std_col = math.nan
+            sem_col = math.nan
+
+        valid_w = np.isfinite(err_vals) & (err_vals > 0)
+
+        if np.any(valid_w):
+            weights = 1.0 / err_vals[valid_w] ** 2
+            weighted_mean_col = float(
+                np.sum(weights * col_vals[valid_w]) / np.sum(weights)
+            )
+            weighted_mean_col_err = float(math.sqrt(1.0 / np.sum(weights)))
+        else:
+            weighted_mean_col = mean_col
+            weighted_mean_col_err = sem_col
+
+        rows.append(
+            {
+                "family": fam,
+                "N": n,
+                "mean_V": mean_v,
+                "mean_UVW1_AB": mean_uv,
+                "mean_UVW1_minus_V": mean_col,
+                "std_UVW1_minus_V": std_col,
+                "sem_UVW1_minus_V": sem_col,
+                "weighted_mean_UVW1_minus_V": weighted_mean_col,
+                "weighted_mean_UVW1_minus_V_err": weighted_mean_col_err,
+            }
+        )
+
+    csv_path = output_dir / "taxonomy_colour_summary.csv"
+    tex_path = output_dir / "taxonomy_colour_summary.tex"
+
+    fieldnames = [
+        "family",
+        "N",
+        "mean_V",
+        "mean_UVW1_AB",
+        "mean_UVW1_minus_V",
+        "std_UVW1_minus_V",
+        "sem_UVW1_minus_V",
+        "weighted_mean_UVW1_minus_V",
+        "weighted_mean_UVW1_minus_V_err",
+    ]
+
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    def _fmt(x: Any, ndigits: int = 3) -> str:
+        try:
+            xf = float(x)
+            if not math.isfinite(xf):
+                return "--"
+            return f"{xf:.{ndigits}f}"
+        except Exception:
+            return "--"
+
+    with tex_path.open("w", encoding="utf-8") as f:
+        f.write("\\begin{table}[t]\n")
+        f.write("\\centering\n")
+        f.write("\\scriptsize\n")
+        f.write("\\caption{Mean UVW1--$V$ colour by taxonomic family.}\n")
+        f.write("\\label{tab:taxonomy_colour_summary}\n")
+        f.write("\\begin{tabular}{lrrrr}\n")
+        f.write("\\hline\n")
+        f.write(
+            "Family & $N$ & "
+            "$\\langle V \\rangle$ & "
+            "$\\langle m_{\\rm UVW1} \\rangle$ & "
+            "$\\langle {\\rm UVW1}-V \\rangle$ \\\\\n"
+        )
+        f.write("\\hline\n")
+
+        for r in rows:
+            fam = r["family"]
+            n = r["N"]
+            mean_v = _fmt(r["mean_V"])
+            mean_uv = _fmt(r["mean_UVW1_AB"])
+
+            col = _fmt(r["weighted_mean_UVW1_minus_V"])
+            col_err = _fmt(r["weighted_mean_UVW1_minus_V_err"])
+
+            if col_err == "--":
+                col_tex = col
+            else:
+                col_tex = f"{col} $\\pm$ {col_err}"
+
+            f.write(
+                f"{fam} & {n} & {mean_v} & {mean_uv} & {col_tex} \\\\\n"
+            )
+
+        f.write("\\hline\n")
+        f.write("\\end{tabular}\n")
+        f.write("\n")
+        f.write(
+            "\\vspace{0.5ex}\n"
+            "\\footnotesize\n"
+            "The colour uncertainty corresponds to the uncertainty of the "
+            "weighted mean using the UVW1 photometric errors. The intrinsic "
+            "object-to-object scatter is reported in the accompanying CSV file.\n"
+        )
+        f.write("\\end{table}\n")
+
+    print(f"[PLOTS][LATEX] Saved: {tex_path}")
+    print(f"[PLOTS][CSV] Saved: {csv_path}")
+
+    print("[PLOTS][COLOUR] Taxonomy colour summary:")
+    for r in rows:
+        print(
+            f"  {r['family']:>5s} "
+            f"N={r['N']:2d} "
+            f"<UVW1-V>={_fmt(r['weighted_mean_UVW1_minus_V'])}"
+            f"±{_fmt(r['weighted_mean_UVW1_minus_V_err'])} "
+            f"scatter={_fmt(r['std_UVW1_minus_V'])}"
+        )
 
 if __name__ == "__main__":
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("config.ini")

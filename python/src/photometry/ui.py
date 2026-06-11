@@ -19,6 +19,8 @@ from astropy.io import fits
 
 from src.photometry.hdu import HDUW
 
+from src.photometry.utils import angle_to_rad
+
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 try:
@@ -28,6 +30,7 @@ except Exception:
 
 import matplotlib.patches as patches
 from matplotlib.transforms import Affine2D
+
 class TrailSelector:
     def __init__(self, height: float = 5.0, semi_out: float = 5.0,
                  finalize_on_click: bool = False) -> None:
@@ -166,6 +169,7 @@ class TrailSelector:
 
     def set_wcs(self, wcs):
         self.wcs = wcs
+    
 
 class UI:
     def __init__(self, hduw: HDUW) -> None:
@@ -600,7 +604,8 @@ class UI:
             transform=self.ax.transAxes,
             va="top", ha="left",
             fontsize=8,
-            bbox=dict(facecolor="black", alpha=0.3, pad=3),
+            bbox=dict(facecolor="white", edgecolor="black", alpha=0.85, pad=4),
+            # bbox=dict(facecolor="black", alpha=0.3, pad=3),
             zorder=1000,
         )
         self.update()
@@ -791,7 +796,12 @@ class UI:
 
             # start with trail geometry (same height / annulus / theta / width if available)
             if sel.width is None or not np.isfinite(sel.width):
-                self._calib_width = 30.0
+                # self._calib_width = 30.0
+                self._calib_width = (
+                    float(sel.width)
+                    if getattr(sel, "width", None) is not None and np.isfinite(float(sel.width))
+                    else 30.0
+                )
             else:
                 self._calib_width = float(sel.width)
 
@@ -863,7 +873,8 @@ class UI:
                     width=float(self._calib_width),
                     height=float(sel.height),
                     semi_out=float(sel.semi_out),
-                    theta=float(sel.theta) if sel.theta is not None else 0.0,
+                    # theta=float(sel.theta) if sel.theta is not None else 0.0,
+                    theta=angle_to_rad(sel.theta),
                     ra=float(self._srclist_ra[self._calib_srclist_index]) if self._srclist_ra is not None else np.nan,
                     dec=float(self._srclist_dec[self._calib_srclist_index]) if self._srclist_dec is not None else np.nan,
                     srclist_file=str(self._srclist_path) if self._srclist_path else "",
@@ -877,7 +888,7 @@ class UI:
                         self._draw_c2_overlays_at(
                             x=float(cx), y=float(cy),
                             width=float(self._calib_width),
-                            theta=float(sel.theta) if sel.theta is not None else 0.0,
+                            theta=angle_to_rad(sel.theta),
                             height6=float(sel.height),
                             semi6=float(sel.semi_out),
                             height35=float(self.c2_height35_pix) if self.c2_height35_pix is not None else None,
@@ -1196,7 +1207,7 @@ class UI:
         if self._calib_center is None or self._calib_width is None:
             return
         cx, cy = self._calib_center
-        theta = float(sel.theta) if sel.theta is not None else 0.0
+        theta = angle_to_rad(sel.theta)
 
         # Build a "fake" selector-like object with the required attributes
         class _Tmp:

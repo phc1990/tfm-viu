@@ -16,6 +16,7 @@ import math
 import numpy as np
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
+from src.photometry.utils import exptime_from_hduw
 
 # photutils (new API first; fallback)
 try:
@@ -198,6 +199,9 @@ class PhotTable:
                 return "counts", bunit_val
 
         return "unknown", bunit_val
+
+    def _exptime_from(self) -> Optional[float]:
+        return exptime_from_hduw(self.hduw)      
 
     def _effective_area_from_mask_valid(self, ap, data: np.ndarray) -> float:
         mask = ap.to_mask(method="exact")
