@@ -1,0 +1,66 @@
+{
+  "Asteropaios": {
+    "_status": "ok",
+    "diameter_km": 56.899,
+    "pv": 0.0488,
+    "rocks_name": "Asteropaios",
+    "rocks_number": 4805,
+    "taxonomy_class": "K"
+  },
+  "Chrisclark": {
+    "_status": "ok",
+    "diameter_km": 19.089,
+    "pv": 0.0494,
+    "rocks_name": "Chrisclark",
+    "rocks_number": 6723,
+    "taxonomy_class": "C"
+  },
+  "Flagstaff": {
+    "_status": "ok",
+    "diameter_km": 11.434,
+    "pv": 0.2551,
+    "rocks_name": "Flagstaff",
+    "rocks_number": 2118,
+    "taxonomy_class": "S"
+  },
+  "Guericke": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "Guericke",
+    "rocks_number": 11537,
+    "taxonomy_class": ""
+  },
+  "Gurzhij": {
+    "_status": "ok",
+    "diameter_km": 4.099,
+    "pv": 0.2569,
+    "rocks_name": "Gurzhij",
+    "rocks_number": 6679,
+    "taxonomy_class": "V"
+  },
+  "Lictoria": {
+    "_status": "ok",
+    "diameter_km": 73.783,
+    "pv": 0.0496,
+    "rocks_name": "Lictoria",
+    "rocks_number": 1107,
+    "taxonomy_class": "P"
+  },
+  "Lucubratio": {
+    "_status": "ok",
+    "diameter_km": 21.9,
+    "pv": 0.0547,
+    "rocks_name": "Lucubratio",
+    "rocks_number": 3021,
+    "taxonomy_class": ""
+  },
+  "Pluto": {
+    "_status": "ok",
+    "diameter_km": 2374.0,
+    "pv": 0.5201,
+    "rocks_name": "Pluto",
+    "rocks_number": 134340,
+    "taxonomy_class": ""
+  }
+}
