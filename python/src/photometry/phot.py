@@ -8,6 +8,7 @@ phot.py — trail photometry core with units-aware handling + uncertainty
 
 from __future__ import annotations
 
+from configparser import ConfigParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List
@@ -105,7 +106,10 @@ class PhotTable:
         f = (filter_code or "").strip().upper()
         return {"L": "UVW1", "M": "UVM2", "S": "UVW2", "V": "V", "B": "B", "U": "U"}.get(f, f)
 
-    
+    @staticmethod   
+    def om_filter_to_band(filt: str) -> str | None:
+        return PhotTable._filter_to_band(filt)
+
     def _effective_area_from_mask(self, ap) -> float:
         mask = ap.to_mask(method='exact')
         if isinstance(mask, (list, tuple)):
@@ -670,6 +674,52 @@ class PhotTable:
         )
 
 
+def predicted_om_ab_mag(
+    config: ConfigParser,
+    v_pred: float,
+    filter_code: str,
+) -> float:
+    """
+    Convert SSOSS V_pred into the expected magnitude in an
+    XMM-Newton/OM filter, expressed in the AB system.
+
+    SSOSS/SVO convention:
+        m_pred_native = V_pred - SVO_ZP_CORR_filter
+
+    OM native -> AB:
+        m_pred_AB = m_pred_native + (ABM0_filter - OMZP_filter)
+    """
+
+    band = PhotTable.om_filter_to_band(filter_code)
+
+    if not band:
+        raise ValueError(
+            f"Unsupported OM filter: {filter_code!r}"
+        )
+
+    section = "PHOTOMETRY"
+
+    svo_corr = config.getfloat(
+        section,
+        f"SVO_ZP_CORR_{band}",
+    )
+
+    ab_zp = config.getfloat(
+        section,
+        f"ABM0{band}",
+    )
+
+    om_zp = config.getfloat(
+        section,
+        f"OMZP_{band}",
+    )
+
+    return (
+        float(v_pred)
+        - svo_corr
+        + (ab_zp - om_zp)
+    )
+
 # # --- phot.py (añadir imports si no están) ---
 # from __future__ import annotations
 # from dataclasses import dataclass
@@ -876,32 +926,264 @@ class C1StarMeasurement:
 
 def compute_c1_for_star(
     phot: "PhotTable",
-    x: float, y: float,
+    x: float,
+    y: float,
     width_pix: float,
     theta_rad: float,
     height_h_pix: float,
     height6_pix: float,
     semi_out_pix: float,
     bg_center=None,
-    debug: bool=False,
+    bg_gap_pix: float = 0.0,
+    debug: bool = False,
 ) -> C1StarMeasurement:
-    ap_h, an_h = build_rect_ap_ann(x, y, width_pix, height_h_pix, theta_rad, semi_out_pix, bg_center=bg_center)
-    rh = phot.perform_trail_rate_photometry(ap_h, an_h, debug=debug)
+    """
+    Empirical C1 PSF correction for one calibration star.
 
-    ap6, an6 = build_rect_ap_ann(x, y, width_pix, height6_pix, theta_rad, semi_out_pix, bg_center=bg_center)
-    r6 = phot.perform_trail_rate_photometry(ap6, an6, debug=debug)
+    C1 corrects the source-only rate measured in the asteroid
+    narrow trail height h to the standard OM r=6" reference.
 
+    Geometry:
+        Rh : width = L = 12", height = asteroid trail height
+        R6 : width = L = 12", height = 12" (= diameter for r=6")
+
+    IMPORTANT:
+    Rh and R6 use the SAME local-background estimate.
+
+    The background annulus is defined relative to the large
+    12" x 12" aperture, NOT relative to the narrow Rh aperture.
+    This avoids treating the stellar PSF immediately outside
+    the narrow aperture as background.
+
+    bg_gap_pix optionally leaves a gap between the 12"x12"
+    source aperture and the inner edge of the background annulus.
+    """
+
+    # ---------------------------------------------------------
+    # Validate geometry
+    # ---------------------------------------------------------
+    width_pix = float(width_pix)
+    height_h_pix = float(height_h_pix)
+    height6_pix = float(height6_pix)
+    semi_out_pix = float(semi_out_pix)
+    bg_gap_pix = float(bg_gap_pix)
+    theta_rad = float(theta_rad)
+
+    if not np.isfinite(width_pix) or width_pix <= 0:
+        raise ValueError("Invalid C1 width_pix.")
+
+    if not np.isfinite(height_h_pix) or height_h_pix <= 0:
+        raise ValueError("Invalid C1 height_h_pix.")
+
+    if not np.isfinite(height6_pix) or height6_pix <= 0:
+        raise ValueError("Invalid C1 height6_pix.")
+
+    if height_h_pix > height6_pix:
+        raise ValueError(
+            "C1 requires height_h_pix <= height6_pix."
+        )
+
+    if not np.isfinite(semi_out_pix) or semi_out_pix <= 0:
+        raise ValueError("Invalid C1 semi_out_pix.")
+
+    if not np.isfinite(bg_gap_pix) or bg_gap_pix < 0:
+        raise ValueError("Invalid C1 bg_gap_pix.")
+
+    centre = (float(x), float(y))
+
+    if bg_center is None:
+        ann_centre = centre
+    else:
+        ann_centre = (
+            float(bg_center[0]),
+            float(bg_center[1]),
+        )
+
+    # ---------------------------------------------------------
+    # Source apertures
+    #
+    # Same length L for both measurements.
+    # Only the transverse height changes.
+    # ---------------------------------------------------------
+    ap_h = RectangularAperture(
+        positions=centre,
+        w=width_pix,
+        h=height_h_pix,
+        theta=theta_rad,
+    )
+
+    ap6 = RectangularAperture(
+        positions=centre,
+        w=width_pix,
+        h=height6_pix,
+        theta=theta_rad,
+    )
+
+    # ---------------------------------------------------------
+    # ONE COMMON background annulus
+    #
+    # Its inner boundary is based on the LARGE C1 aperture,
+    # not on the narrow h aperture.
+    #
+    # bg_gap_pix=0:
+    #     inner boundary = 12" x 12" aperture
+    #
+    # bg_gap_pix>0:
+    #     leaves an empty gap before the background region.
+    # ---------------------------------------------------------
+    bg_w_in = width_pix + 2.0 * bg_gap_pix
+    bg_h_in = height6_pix + 2.0 * bg_gap_pix
+
+    bg_w_out = bg_w_in + 2.0 * semi_out_pix
+    bg_h_out = bg_h_in + 2.0 * semi_out_pix
+
+    an_bg = RectangularAnnulus(
+        positions=ann_centre,
+        w_in=bg_w_in,
+        w_out=bg_w_out,
+        h_in=bg_h_in,
+        h_out=bg_h_out,
+        theta=theta_rad,
+    )
+
+    # ---------------------------------------------------------
+    # Photometry
+    #
+    # Crucial point: SAME an_bg for Rh and R6.
+    # perform_trail_rate_photometry() automatically scales
+    # bkg_per_pix by the effective area of each source aperture.
+    # ---------------------------------------------------------
+    rh = phot.perform_trail_rate_photometry(
+        ap_h,
+        an_bg,
+        debug=debug,
+    )
+
+    r6 = phot.perform_trail_rate_photometry(
+        ap6,
+        an_bg,
+        debug=debug,
+    )
+
+    # ---------------------------------------------------------
+    # Sanity checks
+    # ---------------------------------------------------------
     if not np.isfinite(rh.net_rate) or rh.net_rate <= 0:
-        raise ValueError("Invalid Rh net_rate.")
-    if not np.isfinite(r6.net_rate) or r6.net_rate <= 0:
-        raise ValueError("Invalid R6 net_rate.")
+        raise ValueError(
+            f"Invalid Rh net_rate: {rh.net_rate}"
+        )
 
+    if not np.isfinite(r6.net_rate) or r6.net_rate <= 0:
+        raise ValueError(
+            f"Invalid R6 net_rate: {r6.net_rate}"
+        )
+
+    # ---------------------------------------------------------
+    # C1
+    # ---------------------------------------------------------
     c1 = float(r6.net_rate / rh.net_rate)
-    c1_err = None  # si luego implementas net_rate_err, propagas
+
+    # Do NOT propagate the two rate errors as if they were
+    # independent: Rh and R6 share the same background estimate,
+    # therefore their errors are correlated.
+    #
+    # For the final C1 calibration we use the empirical scatter
+    # among several calibration stars, as recommended by Simon.
+    c1_err = None
+
+    if debug:
+        print("[C1StarMeasurement DEBUG]")
+        print(
+            f"  centre              = "
+            f"({centre[0]:.2f}, {centre[1]:.2f})"
+        )
+        print(
+            f"  source width        = "
+            f"{width_pix:.2f} px"
+        )
+        print(
+            f"  Rh height           = "
+            f"{height_h_pix:.2f} px"
+        )
+        print(
+            f"  R6 height           = "
+            f"{height6_pix:.2f} px"
+        )
+        print(
+            f"  bg gap              = "
+            f"{bg_gap_pix:.2f} px"
+        )
+        print(
+            f"  bg annulus inner    = "
+            f"{bg_w_in:.2f} x {bg_h_in:.2f} px"
+        )
+        print(
+            f"  bg annulus outer    = "
+            f"{bg_w_out:.2f} x {bg_h_out:.2f} px"
+        )
+        print(
+            f"  bkg Rh / R6         = "
+            f"{rh.bkg_per_pix:.6g} / "
+            f"{r6.bkg_per_pix:.6g}"
+        )
+        print(
+            f"  Rh                  = "
+            f"{rh.net_rate:.8g} +/- "
+            f"{rh.net_rate_err}"
+        )
+        print(
+            f"  R6                  = "
+            f"{r6.net_rate:.8g} +/- "
+            f"{r6.net_rate_err}"
+        )
+        print(
+            f"  C1                  = "
+            f"{c1:.8g}"
+        )
+
+        if c1 < 1.0:
+            print(
+                "[C1StarMeasurement DEBUG] WARN: "
+                "C1 < 1. Check star S/N and background contamination."
+            )
 
     return C1StarMeasurement(
         slot=-1,
-        rate_h=float(rh.net_rate), err_h=rh.net_rate_err,
-        rate6=float(r6.net_rate), err6=r6.net_rate_err,
-        c1=c1, c1_err=c1_err,
+        rate_h=float(rh.net_rate),
+        err_h=rh.net_rate_err,
+        rate6=float(r6.net_rate),
+        err6=r6.net_rate_err,
+        c1=c1,
+        c1_err=c1_err,
     )
+# def compute_c1_for_star(
+#     phot: "PhotTable",
+#     x: float, y: float,
+#     width_pix: float,
+#     theta_rad: float,
+#     height_h_pix: float,
+#     height6_pix: float,
+#     semi_out_pix: float,
+#     bg_center=None,
+#     debug: bool=False,
+# ) -> C1StarMeasurement:
+#     ap_h, an_h = build_rect_ap_ann(x, y, width_pix, height_h_pix, theta_rad, semi_out_pix, bg_center=bg_center)
+#     rh = phot.perform_trail_rate_photometry(ap_h, an_h, debug=debug)
+
+#     ap6, an6 = build_rect_ap_ann(x, y, width_pix, height6_pix, theta_rad, semi_out_pix, bg_center=bg_center)
+#     r6 = phot.perform_trail_rate_photometry(ap6, an6, debug=debug)
+
+#     if not np.isfinite(rh.net_rate) or rh.net_rate <= 0:
+#         raise ValueError("Invalid Rh net_rate.")
+#     if not np.isfinite(r6.net_rate) or r6.net_rate <= 0:
+#         raise ValueError("Invalid R6 net_rate.")
+
+#     c1 = float(r6.net_rate / rh.net_rate)
+#     c1_err = None  # si luego implementas net_rate_err, propagas
+
+#     return C1StarMeasurement(
+#         slot=-1,
+#         rate_h=float(rh.net_rate), err_h=rh.net_rate_err,
+#         rate6=float(r6.net_rate), err6=r6.net_rate_err,
+#         c1=c1, c1_err=c1_err,
+#     )

@@ -179,7 +179,7 @@ def zp_from_ini_for_filter(config: ConfigParser, filt: str) -> Optional[float]:
     Return AB zero point for this filter from screening.ini [PHOTOMETRY], if present.
     Keys are ABM0<BAND> where BAND is PhotTable band name (L→UVW1, M→UVM2, ...).
     """
-    band = PhotTable._filter_to_band(filt)
+    band = PhotTable.om_filter_to_band(filt)
     if not band:
         return None
     key = f"ABM0{band}"
@@ -629,16 +629,43 @@ def _compute_c1_if_needed(
 
     # Reuse the existing C2 overlay machinery:
     # for C1, the "large" overlay is not 35 arcsec, but the standard 6 arcsec box.
-    ui_c1.c2_height35_pix = float(height6_pix)
-    ui_c1.c2_semi35_pix = (
+    ui_c1 = UI(hduw)
+
+    # ---------------------------------------------------------
+    # C1 geometry
+    # ---------------------------------------------------------
+    c1_width_pix = float(
+        arcsec_to_pix(hduw, 12.0)
+    )
+
+    c1_bg_semi_out_pix = (
         float(trail_semi_out_pix)
-        if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0
+        if (
+            np.isfinite(trail_semi_out_pix)
+            and trail_semi_out_pix > 0
+        )
         else 6.0
+    )
+
+    # Initially no extra gap.
+    # If visual inspection shows that the local annulus is
+    # problematic, this can be increased independently.
+    c1_bg_gap_pix = 0.0
+
+    # Tell UI that this is C1, not C2.
+    ui_c1.calib_overlay_mode = "c1"
+
+    ui_c1.c1_height6_pix = float(height6_pix)
+    ui_c1.c1_bg_semi_out_pix = float(
+        c1_bg_semi_out_pix
+    )
+    ui_c1.c1_bg_gap_pix = float(
+        c1_bg_gap_pix
     )
 
     # Useful for screenshots/debugging: keep saved A# boxes visible by default.
     ui_c1.keep_calib_boxes = True
-
+    c1_width_pix = float(arcsec_to_pix(hduw, 12.0))
     if srclist_path is not None:
         try:
             ui_c1.add_srclist_overlay(srclist_path)
@@ -647,9 +674,11 @@ def _compute_c1_if_needed(
 
     title = (
         f"C1 calibration — {fits_name}\n"
-        f"Select stars with A + slot. "
-        f"hbox={trail_height_pix:.2f}px -> h6={height6_pix:.2f}px; "
-        f"width≈{trail_width_pix:.2f}px"
+        f"Rh: {c1_width_pix:.1f} x "
+        f"{trail_height_pix:.1f}px | "
+        f"R6: {c1_width_pix:.1f} x "
+        f"{height6_pix:.1f}px | "
+        f"common BG annulus"
     )
     try:
         ui_c1.fig.suptitle(title, fontsize=10)
@@ -657,16 +686,18 @@ def _compute_c1_if_needed(
         ui_c1.ax.set_title(title, fontsize=10)
 
     # The selector is only used to drive the star-calibration UI.
-    # Start with the same hbox height and annulus thickness as the asteroid box.
+    # Start with the same hbox height and annulus thickness as the asteroid box
     selector_c1 = TrailSelector(
         height=float(trail_height_pix),
-        semi_out=(
-            float(trail_semi_out_pix)
-            if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0
-            else 6.0
-        ),
+        semi_out=float(c1_bg_semi_out_pix),
         finalize_on_click=False,
     )
+
+    # Fixed C1 length L = 12 arcsec
+    selector_c1.width = float(c1_width_pix)
+
+    # Same orientation as asteroid trail
+    selector_c1.theta = float(trail_theta_rad)
 
     try:
         ui_c1.select_trail(selector_c1)
@@ -714,7 +745,9 @@ def _compute_c1_if_needed(
 
                 # Prefer the width/theta stored by the UI selection.
                 # Fallback to the asteroid trail geometry.
-                width_pix = float(trail_width_pix)
+                # width_pix = float(trail_width_pix)
+                # NOTE: Simon: fixed stellar-box length L = 12 arcsec. 
+                width_pix = float(arcsec_to_pix(hduw, 12.0))
                 theta = float(trail_theta_rad)
 
                 # For C1, force the small height to be the asteroid hbox.
@@ -723,14 +756,16 @@ def _compute_c1_if_needed(
                     phot=pt,
                     x=x,
                     y=y,
-                    width_pix=width_pix,
-                    theta_rad=theta,
+                    width_pix=float(c1_width_pix),
+                    theta_rad=float(trail_theta_rad),
                     height_h_pix=float(trail_height_pix),
                     height6_pix=float(height6_pix),
-                    semi_out_pix=float(trail_semi_out_pix) if np.isfinite(trail_semi_out_pix) and trail_semi_out_pix > 0 else 6.0,
+                    semi_out_pix=float(c1_bg_semi_out_pix),
                     bg_center=None,
+                    bg_gap_pix=float(c1_bg_gap_pix),
                     debug=False,
                 )
+                
                 meas.slot = int(slot)
                 print(
                     f"[PHOT][C1] A{slot}: using asteroid geometry "

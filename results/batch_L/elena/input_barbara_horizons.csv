@@ -1,0 +1,2 @@
+observation_id,sso_name,ra_deg_1,dec_deg_1,ra_deg_2,dec_deg_2,filter,xmatch_type,v_mag_1,v_mag_1_corrected,mlim_obs,FITS_FILE,DECISION,dra_arcsec,ddec_arcsec,trail_len_arcsec,pa_deg_E_of_N,frame_t1,frame_t2,location
+0781040101,Barbara,50.069560000,0.443030000,50.085230000,0.436970000,L,2,12.442,12.442,20.696785,P0781040101OMS008FSIMAGL000.FTZ,D,56.410,-21.816,60.482,111.143,2016-08-28T02:36:00.000,2016-08-28T03:51:00.000,@XMM

@@ -95,6 +95,14 @@
     "rocks_number": 3529,
     "taxonomy_class": "X"
   },
+  "Flagstaff": {
+    "_status": "ok",
+    "diameter_km": 11.434,
+    "pv": 0.2551,
+    "rocks_name": "Flagstaff",
+    "rocks_number": 2118,
+    "taxonomy_class": "S"
+  },
   "Fredtreasure": {
     "_status": "ok",
     "diameter_km": 15.685,

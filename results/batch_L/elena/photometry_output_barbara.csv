@@ -1,0 +1,4 @@
+target_name,observation_id,filter,fits_name,mag_ab,mag_err,count_rate,count_rate_err,net_counts,net_counts_err,aper_counts,bkg_per_pix,bkg_rms_per_pix,bkg_counts_ap,bkg_counts_ap_err,A_ap_eff,A_bg_eff,zp_ab,tds_corr,c2,f_apcorr,c1,coi_factor,rate_tot_6,rate_tot_6_coi,count_rate_coi,count_rate_final,trail_height_pix,trail_semi_out_pix,trail_semi_in_pix,apcorr_mag,mag_ab_apcorr,mag_ab_apcorr_err,v_mag_1,v_mag_1_corrected,mlim_obs
+2014 OO212,0781040101,L,P0781040101OMS008FSIMAGL000.FTZ,,,,,,,,,,,,,,,,,,,,,,,,13.0,6.0,,,,,,,
+Barbara,0781040101,L,P0781040101OMS008FSIMAGL000.FTZ,,,,,,,,,,,,,,,,,,,,,,,,13.0,6.0,,,,,,,
+2023 FO49,0781040101,L,P0781040101OMS008FSIMAGL000.FTZ,,,,,,,,,,,,,,,,,,,,,,,,13.0,6.0,,,,,,,

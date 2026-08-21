@@ -173,6 +173,18 @@ class TrailSelector:
 
 class UI:
     def __init__(self, hduw: HDUW) -> None:
+
+        # C1 calibration overlay
+        self.calib_overlay_mode: Optional[str] = None
+
+        self.c1_height6_pix: Optional[float] = None
+        self.c1_bg_gap_pix: float = 0.0
+        self.c1_bg_semi_out_pix: Optional[float] = None
+
+        # Extra preview artists used by C1
+        self._preview_extra_artists = []
+
+
         #Bloque para el screenshot de C2 factor h6->h35
         self.keep_calib_boxes: bool = False
         # Parámetros opcionales para C2 (box grande)
@@ -194,8 +206,12 @@ class UI:
         self._selection_frozen = False
 
         self.hduw = hduw
+ 
         self.fig = plt.figure()
-        self.ax = plt.subplot(projection=hduw.wcs)
+        self.ax = self.fig.add_subplot(
+            111,
+            projection=hduw.wcs,
+        )
         
         # Intenta obtener WCS desde el envoltorio o desde el HDU primario
         self.wcs = getattr(hduw, "wcs", None)
@@ -816,12 +832,34 @@ class UI:
 
         # ---------- While calibration slot is active ----------
         if self._calib_active:
+
             # Arrow keys adjust LENGTH (width) of the star box
             k = (event.key or "").lower()
 
             LEFT_KEYS = {"left", "shift+left", "ctrl+left", "alt+left"}
             RIGHT_KEYS = {"right", "shift+right", "ctrl+right", "alt+right"}
 
+            if (
+                    getattr(
+                        self,
+                        "calib_overlay_mode",
+                        None,
+                    )
+                    == "c1"
+                ):
+                    if k in LEFT_KEYS or k in RIGHT_KEYS:
+                        print(
+                            "[UI][C1] Width is fixed to L=12 arcsec."
+                        )
+                        return
+
+                    if event.key in ("[", "]"):
+                        print(
+                            "[UI][C1] Rh height is fixed to "
+                            "the asteroid trail height."
+                        )
+                        return
+                
             if k in LEFT_KEYS:
                 if self._calib_width is not None:
                     self._calib_width = max(5.0, float(self._calib_width) - 1.0)
@@ -883,20 +921,73 @@ class UI:
                 print(f"[UI] Calibration saved: A{self._calib_slot}  idx={self._calib_srclist_index}  "
                     f"x={cx:.2f} y={cy:.2f}  width={self._calib_width:.1f} height={sel.height:.1f} semi_out={sel.semi_out:.1f}")
 
+                # if self.keep_calib_boxes:
+                #     try:
+                #         self._draw_c2_overlays_at(
+                #             x=float(cx), y=float(cy),
+                #             width=float(self._calib_width),
+                #             theta=angle_to_rad(sel.theta),
+                #             height6=float(sel.height),
+                #             semi6=float(sel.semi_out),
+                #             height35=float(self.c2_height35_pix) if self.c2_height35_pix is not None else None,
+                #             semi35=float(self.c2_semi35_pix) if self.c2_semi35_pix is not None else None,
+                #         )
+                #     except Exception as e:
+                #         print(f"[UI] WARN: could not draw persistent C2 overlays: {e}")
                 if self.keep_calib_boxes:
                     try:
-                        self._draw_c2_overlays_at(
-                            x=float(cx), y=float(cy),
-                            width=float(self._calib_width),
-                            theta=angle_to_rad(sel.theta),
-                            height6=float(sel.height),
-                            semi6=float(sel.semi_out),
-                            height35=float(self.c2_height35_pix) if self.c2_height35_pix is not None else None,
-                            semi35=float(self.c2_semi35_pix) if self.c2_semi35_pix is not None else None,
-                        )
-                    except Exception as e:
-                        print(f"[UI] WARN: could not draw persistent C2 overlays: {e}")
+                        if (
+                            getattr(
+                                self,
+                                "calib_overlay_mode",
+                                None,
+                            )
+                            == "c1"
+                        ):
+                            self._draw_c1_overlays_at(
+                                x=float(cx),
+                                y=float(cy),
+                                width=float(self._calib_width),
+                                theta=angle_to_rad(sel.theta),
+                                height_h=float(sel.height),
+                                height6=float(self.c1_height6_pix),
+                                semi_out=(
+                                    float(self.c1_bg_semi_out_pix)
+                                    if self.c1_bg_semi_out_pix
+                                    is not None
+                                    else float(sel.semi_out)
+                                ),
+                                bg_gap=float(self.c1_bg_gap_pix),
+                            )
 
+                        else:
+                            # Existing C2 behaviour
+                            self._draw_c2_overlays_at(
+                                x=float(cx),
+                                y=float(cy),
+                                width=float(self._calib_width),
+                                theta=angle_to_rad(sel.theta),
+                                height6=float(sel.height),
+                                semi6=float(sel.semi_out),
+                                height35=(
+                                    float(self.c2_height35_pix)
+                                    if self.c2_height35_pix
+                                    is not None
+                                    else None
+                                ),
+                                semi35=(
+                                    float(self.c2_semi35_pix)
+                                    if self.c2_semi35_pix
+                                    is not None
+                                    else None
+                                ),
+                            )
+
+                    except Exception as e:
+                        print(
+                            "[UI] WARN: could not draw "
+                            f"persistent calibration overlays: {e}"
+                        )            
 
                 # Exit calibration slot (user can press A then next digit)
                 self._calib_active = False
@@ -991,8 +1082,31 @@ class UI:
 
     # -------------------- preview drawing --------------------
 
+    # def _remove_preview(self):
+    #     # UI-level
+    #     for attr in ("_ap_patch", "_an_patch"):
+    #         artist = getattr(self, attr, None)
+    #         if artist is not None:
+    #             try:
+    #                 artist.remove()
+    #             except Exception:
+    #                 pass
+    #             setattr(self, attr, None)
+
+    #     # Selector-level (in case older code stores them there)
+    #     sel = getattr(self, "_selector", None)
+    #     if sel is not None:
+    #         for attr in ("_ap_patch", "_an_patch"):
+    #             artist = getattr(sel, attr, None)
+    #             if artist is not None:
+    #                 try:
+    #                     artist.remove()
+    #                 except Exception:
+    #                     pass
+    #                 setattr(sel, attr, None)
+
     def _remove_preview(self):
-        # UI-level
+        # UI-level standard preview
         for attr in ("_ap_patch", "_an_patch"):
             artist = getattr(self, attr, None)
             if artist is not None:
@@ -1002,7 +1116,20 @@ class UI:
                     pass
                 setattr(self, attr, None)
 
-        # Selector-level (in case older code stores them there)
+        # Extra C1 preview artists
+        for artist in getattr(
+            self,
+            "_preview_extra_artists",
+            [],
+        ):
+            try:
+                artist.remove()
+            except Exception:
+                pass
+
+        self._preview_extra_artists = []
+
+        # Selector-level
         sel = getattr(self, "_selector", None)
         if sel is not None:
             for attr in ("_ap_patch", "_an_patch"):
@@ -1013,7 +1140,7 @@ class UI:
                     except Exception:
                         pass
                     setattr(sel, attr, None)
-
+                    
     def _draw_preview(self, sel):
         # Always remove previous preview before drawing a new one
         self._remove_preview()
@@ -1051,6 +1178,109 @@ class UI:
             self._an_patch = an_artists[0] if isinstance(an_artists, (list, tuple)) and an_artists else an_artists
             sel._ap_patch = self._ap_patch
             sel._an_patch = self._an_patch
+
+        self.update()
+
+
+    def _draw_c1_preview(self, sel):
+        """
+        Preview of the exact regions used by compute_c1_for_star():
+
+        blue   = Rh aperture
+        orange = R6 aperture
+        red    = common background annulus
+        """
+
+        self._remove_preview()
+
+        if (
+            self._calib_center is None
+            or self._calib_width is None
+            or self.c1_height6_pix is None
+        ):
+            self.update()
+            return
+
+        cx, cy = self._calib_center
+
+        width = float(self._calib_width)
+        height_h = float(sel.height)
+        height6 = float(self.c1_height6_pix)
+        theta = angle_to_rad(sel.theta)
+
+        semi_out = (
+            float(self.c1_bg_semi_out_pix)
+            if self.c1_bg_semi_out_pix is not None
+            else float(sel.semi_out)
+        )
+
+        bg_gap = float(self.c1_bg_gap_pix)
+
+        # Source apertures
+        ap_h = RectangularAperture(
+            (cx, cy),
+            w=width,
+            h=height_h,
+            theta=theta,
+        )
+
+        ap6 = RectangularAperture(
+            (cx, cy),
+            w=width,
+            h=height6,
+            theta=theta,
+        )
+
+        # Exact common C1 background annulus
+        bg_w_in = width + 2.0 * bg_gap
+        bg_h_in = height6 + 2.0 * bg_gap
+
+        bg_w_out = bg_w_in + 2.0 * semi_out
+        bg_h_out = bg_h_in + 2.0 * semi_out
+
+        an_bg = RectangularAnnulus(
+            (cx, cy),
+            w_in=bg_w_in,
+            w_out=bg_w_out,
+            h_in=bg_h_in,
+            h_out=bg_h_out,
+            theta=theta,
+        )
+
+        # Rh: narrow aperture
+        p_h = ap_h._to_patch(
+            fill=False,
+            edgecolor="deepskyblue",
+            linewidth=2.0,
+            alpha=0.95,
+        )
+
+        # R6: standard 12" aperture
+        p_6 = ap6._to_patch(
+            fill=False,
+            edgecolor="orange",
+            linewidth=2.0,
+            alpha=0.95,
+        )
+
+        # Actual pixels used to estimate the common background
+        p_bg = an_bg._to_patch(
+            fill=True,
+            facecolor="red",
+            edgecolor="crimson",
+            linewidth=1.2,
+            alpha=0.15,
+        )
+
+        self.ax.add_patch(p_bg)
+        self.ax.add_patch(p_6)
+        self.ax.add_patch(p_h)
+
+        self._preview_extra_artists = [
+            p_bg,
+            p_6,
+            p_h,
+        ]
 
         self.update()
 
@@ -1203,6 +1433,18 @@ class UI:
                 float(self._srclist_ra[j]), float(self._srclist_dec[j]))
 
     def _draw_calib_preview(self, sel):
+        """
+        Draw calibration-star preview.
+        """
+
+        if getattr(self, "calib_overlay_mode", None) == "c1":
+            self._draw_c1_preview(sel)
+            return
+
+        # Existing generic/C2 behaviour below
+        if self._calib_center is None or self._calib_width is None:
+            return
+
         """Draw preview for calibration-star box using current selector geometry + calib center/width."""
         if self._calib_center is None or self._calib_width is None:
             return
@@ -1237,6 +1479,83 @@ class UI:
                                                     theta=tmp.theta)
 
         self._draw_preview(tmp)
+
+
+    def _draw_c1_overlays_at(
+        self,
+        x,
+        y,
+        width,
+        theta,
+        height_h,
+        height6,
+        semi_out,
+        bg_gap=0.0,
+    ):
+        """
+        Persistent C1 overlay.
+
+        Blue   : Rh source aperture
+        Orange : R6 source aperture
+        Red    : common background annulus
+        """
+
+        width = float(width)
+        height_h = float(height_h)
+        height6 = float(height6)
+        semi_out = float(semi_out)
+        bg_gap = float(bg_gap)
+
+        # Common background geometry
+        bg_w_in = width + 2.0 * bg_gap
+        bg_h_in = height6 + 2.0 * bg_gap
+        bg_w_out = bg_w_in + 2.0 * semi_out
+        bg_h_out = bg_h_in + 2.0 * semi_out
+
+        an_bg = RectangularAnnulus(
+            (float(x), float(y)),
+            w_in=bg_w_in,
+            w_out=bg_w_out,
+            h_in=bg_h_in,
+            h_out=bg_h_out,
+            theta=float(theta),
+        )
+
+        p_bg = an_bg._to_patch(
+            fill=True,
+            facecolor="red",
+            edgecolor="crimson",
+            linewidth=1.1,
+            alpha=0.12,
+        )
+        self.ax.add_patch(p_bg)
+
+        # R6
+        self._draw_rot_rect(
+            float(x),
+            float(y),
+            width,
+            height6,
+            float(theta),
+            edgecolor="orange",
+            linewidth=2.0,
+            alpha=0.9,
+        )
+
+        # Rh
+        self._draw_rot_rect(
+            float(x),
+            float(y),
+            width,
+            height_h,
+            float(theta),
+            edgecolor="deepskyblue",
+            linewidth=1.8,
+            alpha=0.95,
+        )
+
+        self.update()
+
 
     @staticmethod
     def _read_srclist_table(srclist_path: Path) -> dict:

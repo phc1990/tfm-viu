@@ -1,0 +1,3 @@
+observation_id,sso_name,ra_deg_1,dec_deg_1,ra_deg_2,dec_deg_2,filter,xmatch_type,v_mag_1,v_mag_1_corrected,mlim_obs,FITS_FILE,DECISION,dra_arcsec,ddec_arcsec,trail_len_arcsec,pa_deg_E_of_N,frame_t1,frame_t2,exposure_s,skybot_radius_arcmin
+0673002335,Dowling,352.630834583,-1.005171944,352.646320000,-0.998573889,L,3,19.19,20.6742,19.922955,,N,55.739,23.753,60.589,66.919,2012-05-25T10:26:32.000,2012-05-25T11:18:52.000,3140.000,30.000
+0673002335,Dowling,352.630834583,-1.005171944,352.646320000,-0.998573889,L,3,19.19,20.6742,19.922955,,N,55.739,23.753,60.589,66.919,2012-05-25T10:26:32.000,2012-05-25T11:18:52.000,3140.000,30.000
