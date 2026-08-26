@@ -64,20 +64,39 @@ def _robust_stats(values: List[float]) -> Dict[str, float]:
     return dict(n=int(v.size), median=med, mean=mean, std=std, mad=mad)
 
 
+# def _extract_exposure_token(name: str) -> Optional[str]:
+#     """
+#     Examples:
+#       P0781040101OMS008FSIMAGL000.FTZ -> P0781040101OMS008F
+#       P0781040101OMS010FSIMAGL000.FTZ -> P0781040101OMS010F
+#       P0781040101OMX000LSIMAGL000.FTZ -> P0781040101OMX000L
+#     """
+#     up = name.upper()
+#     m = re.search(r"(P\d{10}OMS\d{3}F)", up)
+#     if m:
+#         return m.group(1)
+#     m = re.search(r"(P\d{10}OMX\d{3}[A-Z])", up)
+#     if m:
+#         return m.group(1)
+#     return None
+
 def _extract_exposure_token(name: str) -> Optional[str]:
     """
     Examples:
-      P0781040101OMS008FSIMAGL000.FTZ -> P0781040101OMS008F
-      P0781040101OMS010FSIMAGL000.FTZ -> P0781040101OMS010F
-      P0781040101OMX000LSIMAGL000.FTZ -> P0781040101OMX000L
+      P0781040101OMS008FSIMAGL000.FTZ -> P0781040101OMS008
+      P0700182001OMS008SIMAGE0000.FTZ -> P0700182001OMS008
+      P0781040101OMX000LSIMAGL000.FTZ -> P0781040101OMX000
     """
     up = name.upper()
-    m = re.search(r"(P\d{10}OMS\d{3}F)", up)
+
+    m = re.search(r"(P\d{10}OMS\d{3})", up)
     if m:
         return m.group(1)
-    m = re.search(r"(P\d{10}OMX\d{3}[A-Z])", up)
+
+    m = re.search(r"(P\d{10}OMX\d{3})", up)
     if m:
         return m.group(1)
+
     return None
 
 def _extract_band_from_name(path: Path) -> Optional[str]:
@@ -90,20 +109,30 @@ def _extract_band_from_name(path: Path) -> Optional[str]:
         return PhotTable._filter_to_band(m.group(1))
     return None
 
-def _find_swsrli_for_simag(simag_path: Path, swsrli_files: List[Path]) -> Optional[Path]:
-    token = _extract_exposure_token(simag_path.name)   # P...OMS010F / P...OMX000L
-    band = _extract_band_from_name(simag_path)         # UVW1 / UVM2 / ...
+def _resolve_band(path: Path, hduw: Optional[HDUW] = None) -> Optional[str]:
+    band = _extract_band_from_name(path)
+    if band is not None:
+        return band
+
+    if hduw is not None:
+        filt = _infer_filter_from_header(hduw)
+        if filt and filt != "UNKNOWN":
+            return PhotTable._filter_to_band(filt)
+
+    return None
+
+def _find_swsrli_for_simag(simag_path: Path, swsrli_files: List[Path], band: Optional[str] = None) -> Optional[Path]:
+    token = _extract_exposure_token(simag_path.name)
+    band = band or _extract_band_from_name(simag_path)
     if token is None or band is None:
         return None
 
     for p in swsrli_files:
         up = p.name.upper()
-        if token in up and "SWSRLI" in up:
-            p_band = _extract_band_from_name(p)
-            if p_band == band:
-                return p
-    return None
+        if token in up and "SWSRLI" in up and _extract_band_from_name(p) == band:
+            return p
 
+    return None
 # -----------------------------
 # main action
 # -----------------------------
@@ -170,7 +199,7 @@ def action_phot_c2(config: ConfigParser) -> None:
         filters_raw = [x.strip().upper() for x in _parse_list_csv(c2.get("FILTERS", ""))]
         filters_band = [PhotTable._filter_to_band(f) for f in filters_raw]
 
-        band = _extract_band_from_name(ftz) or "UNKNOWN"
+        band = _resolve_band(ftz, hduw) or "UNKNOWN"
         if filters_band and band not in filters_band:
             print(f"[C2] Skipping {ftz.name} band={band} (not in FILTERS={filters_band})")
             continue
@@ -183,14 +212,22 @@ def action_phot_c2(config: ConfigParser) -> None:
         width_pix0 = float(arcsec_to_pix(hduw, box_len_arcsec))
 
         selector = TrailSelector(height=height6_pix, semi_out=semi6_pix, finalize_on_click=False)
+        selector.width = width_pix0
+
+        print(f"[C2] geometry: width={width_pix0:.2f}px ({box_len_arcsec:.1f}\") height6={height6_pix:.2f}px height35={height35_pix:.2f}px")
         
+        # ui = UI(hduw)
+        # ui.c2_height35_pix = height35_pix
+        # ui.c2_semi35_pix = semi35_pix
         ui = UI(hduw)
         ui.c2_height35_pix = height35_pix
         ui.c2_semi35_pix = semi35_pix
-
+        ui.calib_auto_slot = True
+        ui.calib_max_slots = n_stars
+        ui.keep_calib_boxes = True
 
         # SRCLIST overlay (optional but recommended)
-        swsrli = _find_swsrli_for_simag(ftz, swsrli_files)
+        swsrli = _find_swsrli_for_simag(ftz, swsrli_files, band=band)
         if swsrli is not None and swsrli.exists():
             try:
                 ui.add_srclist_overlay(swsrli)
@@ -203,8 +240,7 @@ def action_phot_c2(config: ConfigParser) -> None:
 
         title = (
             f"C2 calibration — {ftz.name} band={band}\n"
-            f"1) Dibuja dirección/longitud (define theta+width). 2) Pulsa 'A' y luego 1..{n_stars} para marcar estrellas.\n"
-            f"Height6={height6_pix:.1f}px  Height35={height35_pix:.1f}px"
+            f"1) Dibuja dirección/longitud (define theta+width). 2) Pulsa 'A' para seleccionar cada estrella (máx. {n_stars}).\n"            f"Height6={height6_pix:.1f}px  Height35={height35_pix:.1f}px"
         )
         try:
             ui.fig.suptitle(title, fontsize=10)
@@ -238,7 +274,8 @@ def action_phot_c2(config: ConfigParser) -> None:
             try:
                 x = float(d["x"])
                 y = float(d["y"])
-                width_pix = float(d.get("width", width_pix0))
+                # width_pix = float(d.get("width", width_pix0))
+                width_pix = width_pix0
                 theta = float(d.get("theta", selector.theta if getattr(selector, "theta", None) is not None else 0.0))
 
                 meas = compute_c2_for_star(
@@ -255,6 +292,9 @@ def action_phot_c2(config: ConfigParser) -> None:
                 )
                 meas.slot = int(slot)
 
+                snr6 = float(meas.rate6 / meas.err6) if np.isfinite(meas.rate6) and np.isfinite(meas.err6) and meas.err6 > 0 else float("nan")
+                snr35 = float(meas.rate35 / meas.err35) if np.isfinite(meas.rate35) and np.isfinite(meas.err35) and meas.err35 > 0 else float("nan")
+
                 c2_by_filter.setdefault(band, []).append(meas.c2)
 
                 detail_rows.append(dict(
@@ -265,9 +305,9 @@ def action_phot_c2(config: ConfigParser) -> None:
                     width_pix=width_pix,
                     theta_rad=theta,
 
-                    rate6=meas.rate6, err6=meas.err6,
-                    rate35=meas.rate35, err35=meas.err35,
-                    c2=meas.c2, c2_err=meas.c2_err,
+                    rate6=meas.rate6, err6=meas.err6, snr6=snr6,
+                    rate35=meas.rate35, err35=meas.err35, snr35=snr35,
+                    c2=meas.c2, #c2_err=meas.c2_err,
 
                     aper_sum_6=meas.aper_sum_6,
                     bkg_per_pix_6=meas.bkg_per_pix_6,
@@ -286,26 +326,25 @@ def action_phot_c2(config: ConfigParser) -> None:
                     exptime_35=meas.exptime_35,
                 ))
 
-
-                print(f"[C2] {ftz.name} A{meas.slot}: C2={meas.c2:.6f} (R35={meas.rate35:.6g} / R6={meas.rate6:.6g})")
+                print(f"[C2] {ftz.name} A{meas.slot}: C2={meas.c2:.6f} | R6={meas.rate6:.6g} +/- {meas.err6:.3g} (S/N={snr6:.1f}) | R35={meas.rate35:.6g} +/- {meas.err35:.3g} (S/N={snr35:.1f})")
 
             except Exception as e:
                 print(f"[C2] WARN: slot A{slot} failed in {ftz.name}: {e}")
 
-                # --- write detail ---
-            if detail_rows:
-                fieldnames = sorted({k for r in detail_rows for k in r.keys()})
+        # --- write detail ---
+        if detail_rows:
+            fieldnames = sorted({k for r in detail_rows for k in r.keys()})
 
-                write_header = (not out_detail.exists()) or (out_detail.stat().st_size == 0)
-                with out_detail.open("a", newline="", encoding="utf-8") as f:
-                    w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-                    if write_header:
-                        w.writeheader()
-                    w.writerows(detail_rows)
+            write_header = (not out_detail.exists()) or (out_detail.stat().st_size == 0)
+            with out_detail.open("a", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                if write_header:
+                    w.writeheader()
+                w.writerows(detail_rows)
 
-                print(f"[C2] Appended detail: {out_detail}")
-            else:
-                print("[C2] No detail rows produced.")
+            print(f"[C2] Appended detail: {out_detail}")
+        else:
+            print("[C2] No detail rows produced.")
 
     # --- write summary per band ---
     summary_rows: List[Dict[str, Any]] = []
