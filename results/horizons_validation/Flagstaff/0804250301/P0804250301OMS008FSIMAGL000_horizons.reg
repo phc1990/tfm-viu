@@ -1,0 +1,6 @@
+# Region file format: DS9 version 4.1
+global color=cyan dashlist=8 3 width=2 font="helvetica 10 normal roman" select=1 highlite=1 edit=1 move=1 delete=1 include=1 fixed=0 source=1
+fk5
+circle(266.694380000,-29.838480000,3") # color=green text={H START}
+circle(266.705950000,-29.840510000,3") # color=red text={H END}
+line(266.694380000,-29.838480000,266.705950000,-29.840510000) # color=cyan width=2 text={Flagstaff | 0804250301 | P0804250301OMS008FSIMAGL000.FTZ}

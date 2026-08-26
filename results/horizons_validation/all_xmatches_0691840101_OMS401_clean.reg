@@ -1,0 +1,40 @@
+]633;E;{   echo '# Region file format: DS9 version 4.1'\x3b   echo 'fk5'\x3b    find results/horizons_validation     -path '*/0691840101/P0691840101OMS401SIMAGE1000_horizons.reg'     -print | sort | while IFS= read -r f\x3b do       target=$(basename "$(dirname "$(dirname "$f")")")\x3b       label=$(printf '%s' "$target" | tr '_' ' ')\x3b        grep 'text={H START}' "$f" |         sed -E "s/^circle\\(([^,]+),([^,]+),.*$/circle(\\1,\\2,0.000833333d) # color=green text={$label START}/"\x3b        grep 'text={H END}' "$f" |         sed -E "s/^circle\\(([^,]+),([^,]+),.*$/circle(\\1,\\2,0.000833333d) # color=red text={$label END}/"\x3b   done\x3b } > "$OUT";123b3ba2-89bf-43e2-b5af-627e1d0a4362]633;C# Region file format: DS9 version 4.1
+fk5
+circle(333.711050000,-16.961960000,0.000833333d) # color=green text={2001 XC112 START}
+circle(333.713810000,-16.960290000,0.000833333d) # color=red text={2001 XC112 END}
+circle(333.870650000,-17.048170000,0.000833333d) # color=green text={2003 YU153 START}
+circle(333.871900000,-17.046720000,0.000833333d) # color=red text={2003 YU153 END}
+circle(333.544750000,-16.901270000,0.000833333d) # color=green text={2004 UB5 START}
+circle(333.546560000,-16.899760000,0.000833333d) # color=red text={2004 UB5 END}
+circle(333.944050000,-16.966150000,0.000833333d) # color=green text={2008 UP377 START}
+circle(333.946130000,-16.964500000,0.000833333d) # color=red text={2008 UP377 END}
+circle(333.785260000,-17.159140000,0.000833333d) # color=green text={2008 UQ278 START}
+circle(333.787430000,-17.157370000,0.000833333d) # color=red text={2008 UQ278 END}
+circle(333.737660000,-17.170610000,0.000833333d) # color=green text={2008 UQ381 START}
+circle(333.740020000,-17.169250000,0.000833333d) # color=red text={2008 UQ381 END}
+circle(333.702840000,-17.188980000,0.000833333d) # color=green text={2008 VQ10 START}
+circle(333.705150000,-17.187490000,0.000833333d) # color=red text={2008 VQ10 END}
+circle(333.805360000,-17.189600000,0.000833333d) # color=green text={2011 GJ58 START}
+circle(333.807510000,-17.187980000,0.000833333d) # color=red text={2011 GJ58 END}
+circle(333.809810000,-16.804830000,0.000833333d) # color=green text={2011 JK16 START}
+circle(333.811050000,-16.803770000,0.000833333d) # color=red text={2011 JK16 END}
+circle(333.766370000,-17.200090000,0.000833333d) # color=green text={2012 PJ11 START}
+circle(333.769240000,-17.199330000,0.000833333d) # color=red text={2012 PJ11 END}
+circle(333.813350000,-16.807050000,0.000833333d) # color=green text={2015 DW163 START}
+circle(333.814860000,-16.805780000,0.000833333d) # color=red text={2015 DW163 END}
+circle(333.707330000,-16.906060000,0.000833333d) # color=green text={2015 KS202 START}
+circle(333.710520000,-16.903930000,0.000833333d) # color=red text={2015 KS202 END}
+circle(333.865640000,-17.044480000,0.000833333d) # color=green text={2019 XP6 START}
+circle(333.866810000,-17.043960000,0.000833333d) # color=red text={2019 XP6 END}
+circle(333.686070000,-16.843690000,0.000833333d) # color=green text={2020 KO35 START}
+circle(333.689120000,-16.841850000,0.000833333d) # color=red text={2020 KO35 END}
+circle(333.725360000,-17.215650000,0.000833333d) # color=green text={2021 GT222 START}
+circle(333.727310000,-17.214080000,0.000833333d) # color=red text={2021 GT222 END}
+circle(333.693150000,-16.826210000,0.000833333d) # color=green text={2021 VV42 START}
+circle(333.695130000,-16.824690000,0.000833333d) # color=red text={2021 VV42 END}
+circle(333.861010000,-17.084380000,0.000833333d) # color=green text={2023 RP62 START}
+circle(333.863700000,-17.081180000,0.000833333d) # color=red text={2023 RP62 END}
+circle(333.692910000,-16.929430000,0.000833333d) # color=green text={2024 WA43 START}
+circle(333.695140000,-16.927590000,0.000833333d) # color=red text={2024 WA43 END}
+circle(333.356590000,-17.182670000,0.000833333d) # color=green text={Guericke START}
+circle(333.359690000,-17.180700000,0.000833333d) # color=red text={Guericke END}

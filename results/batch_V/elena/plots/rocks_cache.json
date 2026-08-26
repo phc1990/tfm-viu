@@ -1,4 +1,63 @@
 {
+  "1988 RQ5": {
+    "_status": "ok",
+    "diameter_km": 8.084,
+    "pv": 0.133,
+    "rocks_name": "1988 RQ5",
+    "rocks_number": 9570,
+    "taxonomy_class": "S"
+  },
+  "1991 SC1": {
+    "_status": "not_found"
+  },
+  "1991 SG1": {
+    "_status": "ok",
+    "diameter_km": 6.35,
+    "pv": 0.2544,
+    "rocks_name": "1991 SG1",
+    "rocks_number": 5599,
+    "taxonomy_class": "V"
+  },
+  "1998 YU27": {
+    "_status": "ok",
+    "diameter_km": 6.428,
+    "pv": 0.199,
+    "rocks_name": "1998 YU27",
+    "rocks_number": 14657,
+    "taxonomy_class": "S"
+  },
+  "2000 RD50": {
+    "_status": "ok",
+    "diameter_km": 3.754,
+    "pv": 0.2595,
+    "rocks_name": "2000 RD50",
+    "rocks_number": 67508,
+    "taxonomy_class": ""
+  },
+  "2001 FV5": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "2001 FV5",
+    "rocks_number": 48071,
+    "taxonomy_class": ""
+  },
+  "An-Eefje": {
+    "_status": "ok",
+    "diameter_km": NaN,
+    "pv": NaN,
+    "rocks_name": "An-Eefje",
+    "rocks_number": 8289,
+    "taxonomy_class": "S"
+  },
+  "Cevenola": {
+    "_status": "ok",
+    "diameter_km": 15.3,
+    "pv": 0.1966,
+    "rocks_name": "Cevenola",
+    "rocks_number": 1333,
+    "taxonomy_class": "Q"
+  },
   "Chrisclark": {
     "_status": "ok",
     "diameter_km": 19.089,
@@ -23,12 +82,108 @@
     "rocks_number": 6679,
     "taxonomy_class": "V"
   },
+  "Hektor": {
+    "_status": "ok",
+    "diameter_km": 250.0,
+    "pv": 0.0334,
+    "rocks_name": "Hektor",
+    "rocks_number": 624,
+    "taxonomy_class": "D"
+  },
+  "Jaymiematthews": {
+    "_status": "ok",
+    "diameter_km": 8.759,
+    "pv": 0.1493,
+    "rocks_name": "Jaymiematthews",
+    "rocks_number": 10098,
+    "taxonomy_class": "S"
+  },
+  "Joan": {
+    "_status": "ok",
+    "diameter_km": 18.23,
+    "pv": 0.1323,
+    "rocks_name": "Joan",
+    "rocks_number": 2677,
+    "taxonomy_class": "T"
+  },
+  "Lipschutz": {
+    "_status": "ok",
+    "diameter_km": 8.054,
+    "pv": 0.1656,
+    "rocks_name": "Lipschutz",
+    "rocks_number": 2641,
+    "taxonomy_class": "S"
+  },
+  "Lomberg": {
+    "_status": "ok",
+    "diameter_km": 2.228,
+    "pv": 0.3128,
+    "rocks_name": "Lomberg",
+    "rocks_number": 6446,
+    "taxonomy_class": "S"
+  },
+  "Myrtus": {
+    "_status": "ok",
+    "diameter_km": 18.17,
+    "pv": 0.047,
+    "rocks_name": "Myrtus",
+    "rocks_number": 9203,
+    "taxonomy_class": ""
+  },
+  "Nishimura": {
+    "_status": "ok",
+    "diameter_km": 17.052,
+    "pv": 0.0428,
+    "rocks_name": "Nishimura",
+    "rocks_number": 6306,
+    "taxonomy_class": "X"
+  },
   "Pluto": {
     "_status": "ok",
     "diameter_km": 2374.0,
     "pv": 0.5201,
     "rocks_name": "Pluto",
     "rocks_number": 134340,
+    "taxonomy_class": ""
+  },
+  "Quaide": {
+    "_status": "ok",
+    "diameter_km": 17.538,
+    "pv": 0.1222,
+    "rocks_name": "Quaide",
+    "rocks_number": 3876,
+    "taxonomy_class": "K"
+  },
+  "Sakaguchi": {
+    "_status": "ok",
+    "diameter_km": 3.191,
+    "pv": 0.2577,
+    "rocks_name": "Sakaguchi",
+    "rocks_number": 10823,
+    "taxonomy_class": "S"
+  },
+  "Scottobin": {
+    "_status": "ok",
+    "diameter_km": 3.394,
+    "pv": 0.2895,
+    "rocks_name": "Scottobin",
+    "rocks_number": 33811,
+    "taxonomy_class": "S"
+  },
+  "Seeligeria": {
+    "_status": "ok",
+    "diameter_km": 82.783,
+    "pv": 0.0301,
+    "rocks_name": "Seeligeria",
+    "rocks_number": 892,
+    "taxonomy_class": "P"
+  },
+  "Setsuko": {
+    "_status": "ok",
+    "diameter_km": 5.747,
+    "pv": 0.1542,
+    "rocks_name": "Setsuko",
+    "rocks_number": 6251,
     "taxonomy_class": ""
   }
 }
