@@ -1550,7 +1550,7 @@ def plot_vpred_validation(
         linestyle="--",
         linewidth=1.0,
         color="0.35",
-        label="1:1 relation",
+ #       label="1:1 relation",
     )
 
     ax1.set_xlim(
@@ -1566,9 +1566,9 @@ def plot_vpred_validation(
         r"Observed $m_{\rm V,AB}$ (mag)"
     )
 
-    ax1.set_title(
-        r"Validation of $V_{\rm pred}$ with OM $V$ photometry"
-    )
+ #   ax1.set_title(
+ #       r"Validation of $V_{\rm pred}$ with OM $V$ photometry"
+ #   )
 
     ax1.grid(
         alpha=0.20,
@@ -2106,8 +2106,8 @@ def export_photometry_csv_to_latex(
 
         lines.append(r"\bottomrule")
         lines.append(r"\end{tabular}")
-        lines.append(rf"\caption{{{_latex_escape(caption)}}}")
-        lines.append(rf"\label{{{_latex_escape(label)}}}")
+        lines.append(rf"\caption{{{(caption)}}}")
+        lines.append(rf"\label{{{label}}}")
         lines.append(r"\end{table*}")
 
     out_tex.write_text("\n".join(lines), encoding="utf-8")

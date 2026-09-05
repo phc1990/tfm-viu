@@ -1,0 +1,7 @@
+# Region file format: DS9 version 4.1
+global dashlist=8 3 width=2 font="helvetica 10 normal roman" select=1 highlite=1 edit=1 move=1 delete=1 include=1 fixed=0 source=1
+fk5
+circle(143.078080000,-11.071041000,3") # color=yellow text={ORIG START}
+circle(143.154590000,-11.051930000,3") # color=orange text={ORIG END}
+circle(143.126250000,-11.058290000,3") # color=green text={H START}
+circle(143.130770000,-11.057230000,3") # color=red text={H END}

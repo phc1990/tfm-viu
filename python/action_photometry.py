@@ -13,11 +13,16 @@ import numpy as np
 from photutils.aperture import RectangularAnnulus, RectangularAperture
 import subprocess
 from src.photometry.hdu import HDUW
-from src.photometry.phot import PhotTable, PhotometryResult
+from src.photometry.phot import (
+    PhotTable,
+    PhotometryResult,
+    AB_PROP_COEFF,
+    arcsec_to_pix, 
+    compute_c1_for_star
+)
 from src.photometry.ui import UI, TrailSelector
 from src.screening.xsa import convert_filter_name_to_xsa_name
 from astropy.io import fits as _fits
-from src.photometry.phot import arcsec_to_pix, compute_c1_for_star
 from src.photometry.utils import angle_to_rad
 
 from common import (
@@ -267,8 +272,7 @@ def coi_derivative_dR(
     f_coeffs: list[float] | None = None,
 ) -> float:
     """dR_corr/dR_raw for uncertainty propagation.
-
-    For simplicity we ignore d f(x)/dx for the polynomial term.
+    For simplicity we ignore d f(x)/dx for the polynomial term since it is set to f(x) ==1 (ask simon)
     """
     tf = float(frame_time)
     df = float(dead_fraction)
@@ -384,8 +388,13 @@ def _build_csv_row(
     # Correction factors
     "tds_corr": None,
     "c2": None,
+    "c2_err": None,
+
     "f_apcorr": None,
+    "f_apcorr_err": None,
     "apcorr_mag": None,
+    "apcorr_mag_err": None,
+
     "c1": None,
     "c1_err": None,
     "c1_detail_csv": None,
@@ -393,10 +402,19 @@ def _build_csv_row(
 
     # Rate-domain correction chain
     "rate_bkg_6": None,
+    "rate_bkg_6_coi": None,
     "rate_tot_6": None,
     "rate_tot_6_coi": None,
+
     "count_rate_coi": None,
+    "count_rate_coi_err": None,
+
     "count_rate_final": None,
+    "count_rate_final_err": None,
+
+    # Diagnostic APCORR branch only
+    "count_rate_final_apcorr": None,
+    "count_rate_final_apcorr_err": None,
 
     # Screening/catalogue context
     "v_mag_1": None,
@@ -413,8 +431,18 @@ def _build_csv_row(
     if (result.bkg_per_pix is not None) and (result.A_ap_eff is not None):
         bkg_counts_ap = float(result.bkg_per_pix) * float(result.A_ap_eff)
 
-    if (result.bkg_rms_per_pix is not None) and (result.A_ap_eff is not None):
-        bkg_counts_ap_err = float(result.bkg_rms_per_pix) * float(np.sqrt(float(result.A_ap_eff)))
+    if (
+        result.bkg_rms_per_pix is not None
+        and result.A_ap_eff is not None
+        and result.A_bg_eff is not None
+        and np.isfinite(float(result.A_bg_eff))
+        and float(result.A_bg_eff) > 0
+    ):
+        bkg_counts_ap_err = (
+            float(result.A_ap_eff)
+            * float(result.bkg_rms_per_pix)
+            / np.sqrt(float(result.A_bg_eff))
+        )
 
     row.update(
         {
@@ -926,10 +954,25 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         ui.add_srclist_overlay(srclist_path)
         
         #Store TDS_CORR keyword from sourcelist
-        tds_corr = 1.0
+        tds_corr = None
         try:
             with _fits.open(str(srclist_path), memmap=False) as _hdul:
-                tds_corr = float(_hdul[0].header.get("TDS_CORR", 1.0))
+                # tds_corr = float(_hdul[0].header.get("TDS_CORR", 1.0))
+                for hdu in _hdul:
+                    val = hdu.header.get("TDS_CORR")
+                    if val is not None:
+                        try:
+                            val = float(val)
+                            if np.isfinite(val):
+                                tds_corr = val
+                                break
+                        except (TypeError, ValueError):
+                            pass
+                
+                if tds_corr is None:
+                    print("[PHOT] WARN: TDS_CORR not found; using 1.0")
+                    tds_corr = 1.0
+
         except Exception:
             tds_corr = 1.0
 
@@ -1014,6 +1057,21 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         res: PhotometryResult = pt.perform_trail_photometry(ap_box, ann_box, debug=True)
     except Exception as e:
         print(f"[PHOT] WARN: photometry failed: {e}")
+        print("[PHOT] Writing null row to avoid retrying this frame.")
+
+        row = _build_csv_row(
+            target_name=target,
+            obs_id=observation_id,
+            filt=filt,
+            fits_name=fits_name,
+            result=None,
+            selector=selector,
+        )
+
+        append_row(
+            filepath=phot_csv,
+            row=row,
+        )
         return
 
     # Compute apcorr from selected stars (if any) BEFORE writing main CSV row
@@ -1090,6 +1148,7 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
         if np.isfinite(bkg_counts_per_pix) and np.isfinite(exptime) and exptime > 0
         else 0.0
     )
+    
 
     A_h_eff = float(res.A_ap_eff) if res.A_ap_eff is not None else float("nan")
 
@@ -1143,8 +1202,19 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     )
 
     R_net_6 = float(R_net_h * C1) if np.isfinite(R_net_h) else float("nan")
-    R_net_6_err = float(R_net_h_err * C1) if np.isfinite(R_net_h_err) else float("nan")
+    # Propagate Rh -> R6 = C1 * Rh.
+    # Rh (asteroid photometry) and C1 (calibration stars) are treated
+    # as independent measurements:
+    #
+    # Var(R6) = (C1 * sigma_Rh)^2 + (Rh * sigma_C1)^2
+    R_net_6_err = float(np.sqrt((C1 * R_net_h_err)**2 + (R_net_h * C1_err)**2)) if all(np.isfinite(v) for v in (R_net_h, R_net_h_err, C1, C1_err)) else float("nan")
 
+    print(
+        f"[PHOT][C1][ERR] "
+        f"Rh={R_net_h:.6g} +/- {R_net_h_err:.6g} "
+        f"C1={C1:.6g} +/- {C1_err:.6g} "
+        f"-> R6={R_net_6:.6g} +/- {R_net_6_err:.6g}"
+    )
     # 3) Build total (source+background) rate in the 6"-equivalent aperture
     # R_tot_6 = float("nan")
     # if np.isfinite(R_net_6) and np.isfinite(A6_eff):
@@ -1159,16 +1229,18 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     if np.isfinite(R_net_6) and np.isfinite(R_bkg_6):
         R_tot_6 = float(R_net_6 + R_bkg_6)
 
-    print(
-        f"[PHOT][COI][DBG] "
-        f"R_net_h={R_net_h:.6g} R_net_6={R_net_6:.6g} "
-        f"bkg_counts_pix={bkg_counts_per_pix:.6g} "
-        f"exptime={exptime:.3f}s "
-        f"bkg_rate_pix={bkg_rate_per_pix:.6g} "
-        f"A6_eff={A6_eff:.3f} "
-        f"R_bkg_6={R_bkg_6:.6g} "
-        f"R_tot_6={R_tot_6:.6g}"
-    )
+    if (
+        np.isfinite(R_net_h)
+        and R_net_h != 0
+        and np.isfinite(C1)
+        and C1 != 0
+    ):
+        print(
+            f"[PHOT][C1][ERR] fractional: "
+            f"Rh={R_net_h_err / abs(R_net_h):.4f}, "
+            f"C1={C1_err / abs(C1):.4f}, "
+            f"R6={R_net_6_err / abs(R_net_6):.4f}"
+        )
 
     # 4) CoI correction on total rate
     hdr = hduw.hdu.header
@@ -1180,19 +1252,24 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
     coi_factor = float("nan")
     R_net_6_coi = float("nan")
     R_net_6_coi_err = float("nan")
+    R_bkg_6_coi = float("nan")
+
+    sigma_bkg_rate_per_pix = float(res.bkg_rms_per_pix / (exptime * np.sqrt(res.A_bg_eff)))
+    R_bkg_6_err = float(A6_eff * sigma_bkg_rate_per_pix)
+    cov_R6_bkg6 = float(-C1 * A_h_eff * A6_eff * sigma_bkg_rate_per_pix**2)
 
     if np.isfinite(R_tot_6) and np.isfinite(frame_time):
         try:
-            R_tot_6_coi = apply_coi_correction(
-                R_raw=R_tot_6,
-                frame_time=float(frame_time),
-                dead_fraction=float(dead_fraction),
-                f_coeffs=coi_coeffs,
+            R_tot_6 = R_net_6 + R_bkg_6
+            R_tot_6_coi = apply_coi_correction(R_tot_6, frame_time, dead_fraction)
+            R_bkg_6_coi = apply_coi_correction(R_bkg_6, frame_time, dead_fraction)
+            R_net_6_coi = float(R_tot_6_coi - R_bkg_6_coi)
+
+            coi_factor = (
+                float(R_net_6_coi / R_net_6)
+                if np.isfinite(R_net_6) and R_net_6 > 0
+                else float("nan")
             )
-            coi_factor = float(R_tot_6_coi / R_tot_6) if R_tot_6 > 0 else float("nan")
-            # back to net by subtracting background term (assumed unaffected)
-            if np.isfinite(R_bkg_6):
-                R_net_6_coi = float(R_tot_6_coi - R_bkg_6)  
             # propagate statistical uncertainty via derivative dRcorr/dRraw
             d_dR = coi_derivative_dR(
                 R_raw=R_tot_6,
@@ -1200,9 +1277,13 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
                 dead_fraction=float(dead_fraction),
                 f_coeffs=coi_coeffs,
             )
+            d_tot = coi_derivative_dR(R_tot_6, frame_time, dead_fraction)
+            d_bkg = coi_derivative_dR(R_bkg_6, frame_time, dead_fraction)  
             if np.isfinite(d_dR) and np.isfinite(R_net_6_err):
-                # treat sigma(R_tot_6) ~ sigma(R_net_6)
-                R_net_6_coi_err = float(abs(d_dR) * R_net_6_err)
+                # treat sigma(R_tot_6) ~ sigma(R_net_6) (to be reviewed by Simon if we go for this simplification)
+                # R_net_6_coi_err = float(abs(d_dR) * R_net_6_err)
+                var_R_net_6_coi = d_tot**2 * R_net_6_err**2 + (d_tot - d_bkg)**2 * R_bkg_6_err**2 + 2.0 * d_tot * (d_tot - d_bkg) * cov_R6_bkg6
+                R_net_6_coi_err = float(np.sqrt(max(var_R_net_6_coi, 0.0)))
         except Exception as e:
             print(f"[PHOT] WARN: CoI correction failed; using raw rates (reason: {e})")
             R_tot_6_coi = R_tot_6
@@ -1220,67 +1301,262 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
 
     # 6) C2 correction (config.ini); for non-UV filters set C2=1
     C2 = float(config.get("PHOTOMETRY", "C2", fallback="1.0") or 1.0)
+    C2_err = float(config.get("PHOTOMETRY", "C2_ERR", fallback="0.0") or 0.0)
 
-    # 7) Build corrected rates
-    #    - without apcorr (for mag_ab)
-    #    - with apcorr (for mag_ab_apcorr)
-    R_final_no_apcorr = float(R_net_6_coi * tds_corr * C2) if np.isfinite(R_net_6_coi) else float("nan")
-    R_final = float(R_final_no_apcorr * f_apcorr) if np.isfinite(R_final_no_apcorr) else float("nan")
+    # ================================================================
+    # 7) FINAL SCIENCE RATE
+    #
+    #     R_f = R_6,CoI * C2 * C_TDS
+    #
+    # This is the rate used for the scientific AB magnitude.
+    # APCORR IS NOT USED IN THIS BRANCH.
+    # ================================================================
+    R_final = (
+        float(R_net_6_coi * tds_corr * C2)
+        if np.isfinite(R_net_6_coi)
+        else float("nan")
+    )
 
-    R_final_no_apcorr_err = float(R_net_6_coi_err * tds_corr * C2) if np.isfinite(R_net_6_coi_err) else float("nan")
-    R_final_err = float(R_final_no_apcorr_err * f_apcorr) if np.isfinite(R_final_no_apcorr_err) else float("nan")
+    # TDS is treated as fixed (no TDS uncertainty).
+    # C2 uncertainty is the empirical calibration scatter (MAD).
+    R_final_err = (
+        float(np.sqrt(
+            (C2 * tds_corr * R_net_6_coi_err) ** 2
+            + (R_net_6_coi * tds_corr * C2_err) ** 2
+        ))
+        if all(np.isfinite(v) for v in (
+            R_net_6_coi,
+            R_net_6_coi_err,
+            tds_corr,
+            C2,
+            C2_err,
+        ))
+        else float("nan")
+    )
 
-    # 8) Convert to AB magnitudes
-    zp_ab = res.zp_ab if res.zp_ab is not None else (pt.zero_point if pt.zero_point is not None else None)
+
+    # ================================================================
+    # DIAGNOSTIC APCORR BRANCH
+    #
+    # Stored only for traceability / possible future diagnostics.
+    # These quantities MUST NOT be used to derive:
+    #   - count_rate_final
+    #   - count_rate_final_err
+    #   - mag_ab
+    #   - mag_err
+    # ================================================================
+
+    # Empirical uncertainty of apcorr in magnitude space
+    try:
+        apcorr_mag_err_val = float(apcorr_mag_err)
+    except (TypeError, ValueError):
+        apcorr_mag_err_val = 0.0
+
+    if not np.isfinite(apcorr_mag_err_val):
+        apcorr_mag_err_val = 0.0
+
+    # f_apcorr = 10^(-apcorr_mag / 2.5)
+    # Propagate sigma(apcorr_mag) -> sigma(f_apcorr)
+    f_apcorr_err = (
+        float(
+            abs(f_apcorr)
+            * (np.log(10.0) / 2.5)
+            * apcorr_mag_err_val
+        )
+        if np.isfinite(f_apcorr)
+        else float("nan")
+    )
+
+    R_final_apcorr = (
+        float(R_final * f_apcorr)
+        if np.isfinite(R_final) and np.isfinite(f_apcorr)
+        else float("nan")
+    )
+
+    R_final_apcorr_err = (
+        float(np.sqrt(
+            (f_apcorr * R_final_err) ** 2
+            + (R_final * f_apcorr_err) ** 2
+        ))
+        if all(np.isfinite(v) for v in (
+            R_final,
+            R_final_err,
+            f_apcorr,
+            f_apcorr_err,
+        ))
+        else float("nan")
+    )
+
+
+    # ================================================================
+    # 8) CONVERT TO AB MAGNITUDES
+    # ================================================================
+    zp_ab = (
+        res.zp_ab
+        if res.zp_ab is not None
+        else (
+            pt.zero_point
+            if pt.zero_point is not None
+            else None
+        )
+    )
+
+    # ----------------
+    # Scientific branch
+    # ----------------
     mag_ab = None
     mag_ab_err = None
+
+    if (
+        zp_ab is not None
+        and np.isfinite(R_final)
+        and R_final > 0
+    ):
+        mag_ab = float(
+            -2.5 * np.log10(R_final) + float(zp_ab)
+        )
+
+        if (
+            np.isfinite(R_final_err)
+            and R_final_err >= 0
+        ):
+            mag_ab_err = float(
+                AB_PROP_COEFF
+                * R_final_err
+                / R_final
+            )
+
+
+    # ----------------
+    # Diagnostic APCORR branch only
+    # ----------------
     mag_ab_apcorr = None
     mag_ab_apcorr_err = None
 
-    if zp_ab is not None and np.isfinite(R_final_no_apcorr) and R_final_no_apcorr > 0:
-        mag_ab = float(-2.5 * np.log10(R_final_no_apcorr) + float(zp_ab))
-        if np.isfinite(R_final_no_apcorr_err) and R_final_no_apcorr_err >= 0:
-            mag_ab_err = float(1.0857 * R_final_no_apcorr_err / R_final_no_apcorr)
+    if (
+        zp_ab is not None
+        and np.isfinite(R_final_apcorr)
+        and R_final_apcorr > 0
+    ):
+        mag_ab_apcorr = float(
+            -2.5 * np.log10(R_final_apcorr)
+            + float(zp_ab)
+        )
 
-    if zp_ab is not None and np.isfinite(R_final) and R_final > 0:
-        mag_ab_apcorr = float(-2.5 * np.log10(R_final) + float(zp_ab))
-        if np.isfinite(R_final_err) and R_final_err >= 0:
-            stat_err = float(1.0857 * R_final_err / R_final)
-            mag_ab_apcorr_err = float(np.hypot(stat_err, float(apcorr_mag_err)))
+        if (
+            np.isfinite(R_final_apcorr_err)
+            and R_final_apcorr_err >= 0
+        ):
+            mag_ab_apcorr_err = float(
+                AB_PROP_COEFF
+                * R_final_apcorr_err
+                / R_final_apcorr
+            )
 
-    # Overwrite row with consistent outputs
-    row["zp_ab"] = float(zp_ab) if zp_ab is not None else row.get("zp_ab")
+
+    # ================================================================
+    # 9) STORE OUTPUTS
+    # ================================================================
+
+    # Zero point
+    row["zp_ab"] = (
+        float(zp_ab)
+        if zp_ab is not None
+        else row.get("zp_ab")
+    )
+
+    # ----------------
+    # SCIENCE OUTPUTS
+    # ----------------
     row["mag_ab"] = mag_ab
     row["mag_err"] = mag_ab_err
-    row["mag_ab_apcorr"] = mag_ab_apcorr
-    row["mag_ab_apcorr_err"] = mag_ab_apcorr_err
-    row["apcorr_mag"] = apcorr_mag
 
     row["tds_corr"] = tds_corr
+
     row["c2"] = C2
-    row["f_apcorr"] = f_apcorr
+    row["c2_err"] = C2_err
+
     row["c1"] = C1
     row["c1_err"] = C1_err
-    row["c1_detail_csv"] = str(c1_csv_path) if c1_csv_path is not None else None
+    row["c1_detail_csv"] = (
+        str(c1_csv_path)
+        if c1_csv_path is not None
+        else None
+    )
+
     row["coi_factor"] = coi_factor
+
+    # Rate-domain correction chain
     row["rate_tot_6"] = R_tot_6
     row["rate_tot_6_coi"] = R_tot_6_coi
+
     row["rate_bkg_6"] = R_bkg_6
+    row["rate_bkg_6_coi"] = R_bkg_6_coi
+
+    # Critical intermediate product:
+    # allows R_f and m_AB to be recomputed later without rerunning photometry
     row["count_rate_coi"] = R_net_6_coi
+    row["count_rate_coi_err"] = R_net_6_coi_err
+
+    # Official final science rate:
+    # R_f = R_6,CoI * C2 * C_TDS
     row["count_rate_final"] = R_final
+    row["count_rate_final_err"] = R_final_err
 
-    # derive actual geometry from the final apertures
-    trail_height_pix = float(getattr(ap_box, "h", np.nan))
-    trail_width_pix = float(getattr(ap_box, "w", np.nan))
 
-    # annulus thickness in pixels (semi_out), and any inner gap (semi_in)
-    semi_out = float((ann_box.w_out - ann_box.w_in) / 2.0) if ann_box is not None else np.nan
-    semi_in = float((ann_box.w_in - ap_box.w) / 2.0) if ann_box is not None else 0.0
+    # ----------------
+    # DIAGNOSTIC APCORR OUTPUTS ONLY
+    # ----------------
+    row["f_apcorr"] = f_apcorr
+    row["f_apcorr_err"] = f_apcorr_err
+
+    row["apcorr_mag"] = apcorr_mag
+    row["apcorr_mag_err"] = apcorr_mag_err_val
+
+    row["count_rate_final_apcorr"] = R_final_apcorr
+    row["count_rate_final_apcorr_err"] = R_final_apcorr_err
+
+    row["mag_ab_apcorr"] = mag_ab_apcorr
+    row["mag_ab_apcorr_err"] = mag_ab_apcorr_err
+
+
+    # ================================================================
+    # 10) STORE FINAL APERTURE GEOMETRY
+    # ================================================================
+
+    # Derive actual geometry from the final apertures
+    trail_height_pix = float(
+        getattr(ap_box, "h", np.nan)
+    )
+    trail_width_pix = float(
+        getattr(ap_box, "w", np.nan)
+    )
+
+    # Annulus thickness in pixels (semi_out),
+    # and any inner gap (semi_in)
+    semi_out = (
+        float((ann_box.w_out - ann_box.w_in) / 2.0)
+        if ann_box is not None
+        else np.nan
+    )
+
+    semi_in = (
+        float((ann_box.w_in - ap_box.w) / 2.0)
+        if ann_box is not None
+        else 0.0
+    )
     semi_in = max(0.0, semi_in)
 
-    # store these (override selector-based fields)
+    # Store these (override selector-based fields)
     row["trail_height_pix"] = trail_height_pix
     row["trail_semi_out_pix"] = semi_out
     row["trail_semi_in_pix"] = semi_in
 
-    append_row(filepath=phot_csv, row=row)
+
+    # ================================================================
+    # 11) WRITE PHOTOMETRY ROW
+    # ================================================================
+    append_row(
+        filepath=phot_csv,
+        row=row,
+    )

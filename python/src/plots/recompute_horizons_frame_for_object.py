@@ -40,10 +40,21 @@ DEFAULT_HORIZONS_LOCATION = "@XMM"
 CSV_COLUMNS = [
     "observation_id",
     "sso_name",
+
+    # recomputed with Horizons
     "ra_deg_1",
     "dec_deg_1",
+    "horizons_start_unc_3sigma_arcsec",
     "ra_deg_2",
     "dec_deg_2",
+    "horizons_end_unc_3sigma_arcsec",
+
+    # original positions inherited from screening.csv
+    "orig_ra_deg_1",
+    "orig_dec_deg_1",
+    "orig_ra_deg_2",
+    "orig_dec_deg_2",
+
     "filter",
     "xmatch_type",
     "v_mag_1",
@@ -180,6 +191,183 @@ def horizons_id_candidates(name: str) -> list[str]:
 
     return out
 
+# Generic helpers to store horizons output per target-obsid-frame into csv and reg files
+def safe_filename_component(value: object) -> str:
+    """
+    Convert target/OBSID/frame names into filesystem-safe components.
+    """
+    s = norm(value)
+    s = strip_number_prefix(s)
+
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9_.-]+", "_", s)
+    s = s.strip("._")
+
+    return s or "unknown"
+
+def write_ds9_fk5_region(
+    row: dict[str, str],
+    output_path: Path,
+) -> None:
+    """
+    Write both the original screening positions and the recomputed
+    Horizons positions as a DS9 FK5 region.
+
+    Colours:
+      - original START: yellow
+      - original END:   orange
+      - Horizons START: green
+      - Horizons END:   red
+    """
+
+    # recomputed Horizons positions
+    ra1 = to_float(row.get("ra_deg_1"))
+    dec1 = to_float(row.get("dec_deg_1"))
+    ra2 = to_float(row.get("ra_deg_2"))
+    dec2 = to_float(row.get("dec_deg_2"))
+
+    # original positions from screening.csv
+    ora1 = to_float(row.get("orig_ra_deg_1"))
+    odec1 = to_float(row.get("orig_dec_deg_1"))
+    ora2 = to_float(row.get("orig_ra_deg_2"))
+    odec2 = to_float(row.get("orig_dec_deg_2"))
+
+    # Uncertaintiy in position from Horizons
+    unc1_3sigma = to_float(row.get("unc1_3sigma"))
+    unc2_3sigma = to_float(row.get("unc2_3sigma"))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8") as f:
+        f.write("# Region file format: DS9 version 4.1\n")
+        f.write(
+            'global dashlist=8 3 width=2 font="helvetica 10 normal roman" '
+            "select=1 highlite=1 edit=1 move=1 delete=1 include=1 fixed=0 source=1\n"
+        )
+        f.write("fk5\n")
+
+        # ---------------------------
+        # Original screening positions
+        # ---------------------------
+        if all(math.isfinite(v) for v in (ora1, odec1)):
+            f.write(
+                f'circle({ora1:.9f},{odec1:.9f},3") '
+                f'# color=yellow text={{ORIG START}}\n'
+            )
+
+        if all(math.isfinite(v) for v in (ora2, odec2)):
+            f.write(
+                f'circle({ora2:.9f},{odec2:.9f},3") '
+                f'# color=orange text={{ORIG END}}\n'
+            )
+        if math.isfinite(unc1_3sigma) and unc1_3sigma > 0:
+            lines.append(
+                f'circle({ra1:.9f},{dec1:.9f},{unc1_3sigma:.3f}") '
+                f'# color=green width=1 dash=1 text={{HSTART 3sigma}}'
+            )
+
+        if math.isfinite(unc2_3sigma) and unc2_3sigma > 0:
+            lines.append(
+                f'circle({ra2:.9f},{dec2:.9f},{unc2_3sigma:.3f}") '
+                f'# color=red width=1 dash=1 text={{HEND 3sigma}}'
+            )
+
+        # ---------------------------
+        # Recomputed Horizons positions
+        # ---------------------------
+        if all(math.isfinite(v) for v in (ra1, dec1)):
+            f.write(
+                f'circle({ra1:.9f},{dec1:.9f},3") '
+                f'# color=green text={{H START}}\n'
+            )
+
+        if all(math.isfinite(v) for v in (ra2, dec2)):
+            f.write(
+                f'circle({ra2:.9f},{dec2:.9f},3") '
+                f'# color=red text={{H END}}\n'
+            )
+
+        # ---------------------------
+        # Optional trail lines
+        # Leave commented unless needed
+        # ---------------------------
+        # if all(math.isfinite(v) for v in (ora1, odec1, ora2, odec2)):
+        #     f.write(
+        #         f'line({ora1:.9f},{odec1:.9f},{ora2:.9f},{odec2:.9f}) '
+        #         f'# color=yellow dash=1\n'
+        #     )
+        #
+        # if all(math.isfinite(v) for v in (ra1, dec1, ra2, dec2)):
+        #     f.write(
+        #         f'line({ra1:.9f},{dec1:.9f},{ra2:.9f},{dec2:.9f}) '
+        #         f'# color=cyan width=2\n'
+        #     )
+
+def write_validation_artifacts(
+    rows: list[dict[str, str]],
+    output_dir: Path,
+) -> None:
+    """
+    Write one Horizons CSV and one DS9 FK5 region file
+    for each target/OBSID/frame.
+    """
+
+    for row in rows:
+
+        target = safe_filename_component(
+            row.get("sso_name")
+        )
+
+        obsid = safe_filename_component(
+            row.get("observation_id")
+        )
+
+        fits_name = Path(
+            norm(row.get("FITS_FILE"))
+        ).stem
+
+        frame = safe_filename_component(
+            fits_name
+        )
+
+        frame_dir = (
+            Path(output_dir)
+            / target
+            / obsid
+        )
+
+        frame_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        csv_path = (
+            frame_dir
+            / f"{frame}_horizons.csv"
+        )
+
+        reg_path = (
+            frame_dir
+            / f"{frame}_horizons.reg"
+        )
+
+        # One-row CSV
+        write_rows(
+            [row],
+            csv_path,
+        )
+
+        # Matching DS9 FK5 region
+        write_ds9_fk5_region(
+            row,
+            reg_path,
+        )
+
+        log(
+            f"[OK] Horizons validation products:\n"
+            f"     CSV: {csv_path}\n"
+            f"     REG: {reg_path}"
+        )
 
 # -----------------------------
 # screening/FITS helpers
@@ -332,7 +520,8 @@ def query_horizons_position(
     timeout: float,
     retries: int,
     sleep_s: float,
-) -> tuple[float, float, str, str]:
+) -> tuple[float, float, str, str, float]:
+# ) -> tuple[float, float, str, str]:
     """Return RA, DEC, Vmag string, and Horizons ID used.
 
     Uses Horizons smallbody search. Tries asteroid number first if present, then name.
@@ -365,6 +554,12 @@ def query_horizons_position(
                     if math.isfinite(v):
                         vmag = f"{v:.3f}"
 
+                unc_3sigma = float("nan")
+                if "SMAA_3sigma" in eph.colnames:
+                    unc_3sigma = as_float(row["SMAA_3sigma"])
+
+                return ra, dec, vmag, hid, unc_3sigma
+
                 return ra, dec, vmag, hid
 
             except Exception as e:
@@ -396,8 +591,10 @@ def build_output_row(
     sso_name: str,
     ra1: float,
     dec1: float,
+    unc1_3sigma: float,
     ra2: float,
     dec2: float,
+    unc2_3sigma: float,
     v_mag_1: str,
     decision: str,
     center: SkyCoord,
@@ -416,13 +613,35 @@ def build_output_row(
     # Keep corrected magnitude numeric for action_screening.py.
     v_corr = norm(base_row.get("v_mag_1_corrected")) or v_mag_1 or norm(base_row.get("v_mag_1"))
 
+    orig_ra1 = norm(base_row.get("ra_deg_1"))
+    orig_dec1 = norm(base_row.get("dec_deg_1"))
+    orig_ra2 = norm(base_row.get("ra_deg_2"))
+    orig_dec2 = norm(base_row.get("dec_deg_2"))
+
+    
+
     return {
         "observation_id": norm(base_row.get("observation_id") or base_row.get("obsid")),
         "sso_name": sso_name,
+
+        # recomputed Horizons positions
         "ra_deg_1": f"{ra1:.9f}",
         "dec_deg_1": f"{dec1:.9f}",
         "ra_deg_2": f"{ra2:.9f}",
         "dec_deg_2": f"{dec2:.9f}",
+
+        # original positions from screening.csv
+        "orig_ra_deg_1": orig_ra1,
+        "orig_dec_deg_1": orig_dec1,
+        "orig_ra_deg_2": orig_ra2,
+        "orig_dec_deg_2": orig_dec2,
+        "horizons_start_unc_3sigma_arcsec": (
+        f"{unc1_3sigma:.3f}" if math.isfinite(unc1_3sigma) else ""
+    ),
+    "horizons_end_unc_3sigma_arcsec": (
+        f"{unc2_3sigma:.3f}" if math.isfinite(unc2_3sigma) else ""
+    ),
+
         "filter": norm(base_row.get("filter")),
         "xmatch_type": norm(base_row.get("xmatch_type")) or "",
         "v_mag_1": v_mag_1 or norm(base_row.get("v_mag_1")),
@@ -443,7 +662,6 @@ def build_output_row(
         "sep_start_arcsec_from_frame_center": f"{c1.separation(center).arcsec:.3f}",
         "sep_end_arcsec_from_frame_center": f"{c2.separation(center).arcsec:.3f}",
     }
-
 
 def write_rows(rows: list[dict[str, str]], output: Optional[Path]) -> None:
     if output is None:
@@ -497,7 +715,7 @@ def process_target_row(args, row: dict[str, str]) -> list[dict[str, str]]:
         return []
 
     try:
-        ra1, dec1, v1, hid1 = query_horizons_position(
+        ra1, dec1, v1, hid1, unc1_3sigma = query_horizons_position(
             target,
             t1,
             location=args.horizons_location,
@@ -505,7 +723,7 @@ def process_target_row(args, row: dict[str, str]) -> list[dict[str, str]]:
             retries=args.horizons_retries,
             sleep_s=args.horizons_retry_sleep,
         )
-        ra2, dec2, v2, hid2 = query_horizons_position(
+        ra2, dec2, v2, hid2, unc2_3sigma = query_horizons_position(
             target,
             t2,
             location=args.horizons_location,
@@ -530,8 +748,10 @@ def process_target_row(args, row: dict[str, str]) -> list[dict[str, str]]:
             sso_name=target,
             ra1=ra1,
             dec1=dec1,
+            unc1_3sigma=unc1_3sigma,
             ra2=ra2,
             dec2=dec2,
+            unc2_3sigma=unc2_3sigma,
             v_mag_1=vmag,
             decision=decision,
             center=center,
@@ -567,7 +787,7 @@ def process_all_xmatches_row(args, row: dict[str, str]) -> list[dict[str, str]]:
         sky_name = skybot_name(r1)
 
         try:
-            ra1, dec1, hv1, hid1 = query_horizons_position(
+            ra1, dec1, hv1, hid1, unc1_3sigma = query_horizons_position(
                 sky_name,
                 t1,
                 location=args.horizons_location,
@@ -575,7 +795,7 @@ def process_all_xmatches_row(args, row: dict[str, str]) -> list[dict[str, str]]:
                 retries=args.horizons_retries,
                 sleep_s=args.horizons_retry_sleep,
             )
-            ra2, dec2, hv2, hid2 = query_horizons_position(
+            ra2, dec2, hv2, hid2, unc2_3sigma = query_horizons_position(
                 sky_name,
                 t2,
                 location=args.horizons_location,
@@ -596,8 +816,10 @@ def process_all_xmatches_row(args, row: dict[str, str]) -> list[dict[str, str]]:
                 sso_name=sky_name,
                 ra1=ra1,
                 dec1=dec1,
+                unc1_3sigma=unc1_3sigma,
                 ra2=ra2,
                 dec2=dec2,
+                unc2_3sigma=unc2_3sigma,
                 v_mag_1=vmag,
                 decision="D",
                 center=center,
@@ -647,6 +869,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--horizons-retry-sleep", type=float, default=2.0, help="Seconds between Horizons retries")
     p.add_argument("--strict", action="store_true", help="Raise if a target cannot be resolved instead of skipping")
     p.add_argument("--output", type=Path, help="Write CSV output here instead of stdout")
+    p.add_argument("--output-dir", type=Path,help=("Directory for per-target/per-OBSID Horizons validation products. " "Writes one CSV and one DS9 FK5 .reg file per target/OBSID/frame."),
+)
     args = p.parse_args(argv)
 
     if not args.all_xmatches and not args.target:
@@ -679,7 +903,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             out_rows.extend(process_target_row(args, row))
 
-    write_rows(out_rows, args.output)
+    # write_rows(out_rows, args.output)
+    if args.output_dir is not None:
+        write_validation_artifacts( out_rows, args.output_dir,)
+
+    elif args.output is not None:
+        write_rows(out_rows, args.output,)
+
+    else:
+        write_rows(out_rows, None,)
+
+    return 0
     return 0
 
 

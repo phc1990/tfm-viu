@@ -330,21 +330,20 @@ def action_phot_c2(config: ConfigParser) -> None:
 
             except Exception as e:
                 print(f"[C2] WARN: slot A{slot} failed in {ftz.name}: {e}")
+    # --- write detail ---
+    if detail_rows:
+        fieldnames = sorted({k for r in detail_rows for k in r.keys()})
 
-        # --- write detail ---
-        if detail_rows:
-            fieldnames = sorted({k for r in detail_rows for k in r.keys()})
+        write_header = (not out_detail.exists()) or (out_detail.stat().st_size == 0)
+        with out_detail.open("a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if write_header:
+                w.writeheader()
+            w.writerows(detail_rows)
 
-            write_header = (not out_detail.exists()) or (out_detail.stat().st_size == 0)
-            with out_detail.open("a", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-                if write_header:
-                    w.writeheader()
-                w.writerows(detail_rows)
-
-            print(f"[C2] Appended detail: {out_detail}")
-        else:
-            print("[C2] No detail rows produced.")
+        print(f"[C2] Appended detail: {out_detail}")
+    else:
+        print("[C2] No detail rows produced.")
 
     # --- write summary per band ---
     summary_rows: List[Dict[str, Any]] = []
@@ -378,13 +377,15 @@ def action_phot_c2(config: ConfigParser) -> None:
             "ann_large_arcsec",
         ]
 
-        write_header = (not out_file.exists()) or (out_file.stat().st_size == 0)
-        with out_file.open("a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-            if write_header:
-                w.writeheader()
+        with out_file.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(
+                f,
+                fieldnames=fieldnames,
+                extrasaction="ignore",
+            )
+            w.writeheader()
             w.writerows(summary_rows)
 
-        print(f"[C2] Appended summary: {out_file}")
+        print(f"[C2] Wrote summary: {out_file}")
     else:
         print("[C2] No summary rows produced (no C2 computed).")

@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+from astropy.visualization import ZScaleInterval
 import numpy as np
 # photutils ≥ 1.0 moved aperture APIs under photutils.aperture
 try:
@@ -207,7 +208,8 @@ class UI:
 
         self.hduw = hduw
  
-        self.fig = plt.figure()
+        # self.fig = plt.figure()
+        self.fig = plt.figure(figsize=(12, 10), dpi=110)
         self.ax = self.fig.add_subplot(
             111,
             projection=hduw.wcs,
@@ -222,15 +224,43 @@ class UI:
                 self.wcs = None     
 
         # assume self.image2d already exists; ensure it's masked
-        img = np.ma.masked_invalid(hduw.hdu.data)
-        self.im = self.ax.imshow(img, origin="lower", cmap="gray")
-        self.im.cmap.set_bad(alpha=0)
+        # img = np.ma.masked_invalid(hduw.hdu.data)
+        # self.im = self.ax.imshow(img, origin="lower", cmap="gray")
+        # self.im.cmap.set_bad(alpha=0)
+
+        # self.im = self.ax.imshow(
+        #     hduw.hdu.data, cmap='Greys', origin='lower',
+        #     vmin=hduw.bkg_median - 3 * hduw.bkg_sigma,
+        #     vmax=hduw.bkg_median + 3 * hduw.bkg_sigma
+        # )
+
+        data = np.asarray(hduw.hdu.data, dtype=float)
+        img = np.ma.masked_invalid(data)
+
+        finite = data[np.isfinite(data)]
+
+        try:
+            zscale = ZScaleInterval(contrast=0.25)
+            vmin, vmax = zscale.get_limits(finite)
+            print(f"[UI] ZScale: vmin={vmin:.6g}, vmax={vmax:.6g}")
+        except Exception as e:
+            print(f"[UI] WARN: ZScale failed ({e}); using background +/- 3 sigma")
+            vmin = hduw.bkg_median - 3 * hduw.bkg_sigma
+            vmax = hduw.bkg_median + 3 * hduw.bkg_sigma
 
         self.im = self.ax.imshow(
-            hduw.hdu.data, cmap='Greys', origin='lower',
-            vmin=hduw.bkg_median - 3 * hduw.bkg_sigma,
-            vmax=hduw.bkg_median + 3 * hduw.bkg_sigma
+            img,
+            origin="lower",
+            cmap="gray",
+            vmin=vmin,
+            vmax=vmax,
+            interpolation="nearest",
         )
+
+        self.im.cmap.set_bad(alpha=0)
+        self.fig.colorbar(self.im, ax=self.ax)
+
+
         self.fig.colorbar(self.im, ax=self.ax)
 
         self._pan_press = None
@@ -262,6 +292,8 @@ class UI:
 
         # Store star selections: slot -> dict with star + geometry
         self.calib_star_selections: Dict[int, Dict[str, Any]] = {}
+        self.calib_auto_slot = False
+        self.calib_max_slots = 5
 
 
     def add_sources(
@@ -776,6 +808,15 @@ class UI:
         if sel._start is None or sel._end is None:
              return
 
+    def _activate_calib_slot(self, sel, slot: int) -> None:
+        self._calib_slot = int(slot)
+        self._calib_arm = False
+        self._calib_active = True
+        self._calib_width = float(sel.width) if getattr(sel, "width", None) is not None and np.isfinite(float(sel.width)) else 30.0
+        self._calib_center = None
+        self._calib_srclist_index = None
+        self._draw_hint_text(f"Calibration slot A{self._calib_slot} active:\nLEFT-click near a yellow source.\n←/→: adjust box length   [ ]: adjust height   {{ }}: adjust annulus\nEnter: save slot   R: reset slot")
+        
     def _on_key_press(self, event):
         if self._selector is None:
             return
@@ -795,41 +836,61 @@ class UI:
 
         # Section for SRCLIST apcorr selection
             # ---------- Calibration mode arming: press A then 1..5 ----------
+        # if event.key in ("a", "A"):
+        #     self._calib_arm = True
+        #     self._calib_active = False
+        #     self._calib_slot = None
+        #     self._draw_hint_text("Calibration (apcorr) mode:\n"
+        #                         "Press a digit 1..5 to choose slot (A1..A5), then LEFT-click near a yellow source.\n"
+        #                         "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
+        #                         "Enter: save slot   R: reset slot")
+        #     return
+
+        # if self._calib_arm and event.key in ("1", "2", "3", "4", "5"):
+        #     self._calib_slot = int(event.key)
+        #     self._calib_arm = False
+        #     self._calib_active = True
+
+        #     # start with trail geometry (same height / annulus / theta / width if available)
+        #     if sel.width is None or not np.isfinite(sel.width):
+        #         # self._calib_width = 30.0
+        #         self._calib_width = (
+        #             float(sel.width)
+        #             if getattr(sel, "width", None) is not None and np.isfinite(float(sel.width))
+        #             else 30.0
+        #         )
+        #     else:
+        #         self._calib_width = float(sel.width)
+
+        #     self._calib_center = None
+        #     self._calib_srclist_index = None
+
+        #     self._draw_hint_text(f"Calibration slot A{self._calib_slot} active:\n"
+        #                         "LEFT-click near a yellow source to place the same box/annulus centered on that star.\n"
+        #                         "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
+        #                         "Enter: save slot   R: reset slot")
+        #     return
+
+        # ---------- Calibration mode ----------
         if event.key in ("a", "A"):
+            if getattr(self, "calib_auto_slot", False):
+                max_slots = max(1, int(getattr(self, "calib_max_slots", 5)))
+                next_slot = next((i for i in range(1, max_slots + 1) if i not in self.calib_star_selections), None)
+                if next_slot is None:
+                    self._draw_hint_text(f"Calibration complete: {len(self.calib_star_selections)}/{max_slots} stars saved.")
+                    return
+                self._activate_calib_slot(sel, next_slot)
+                return
+
             self._calib_arm = True
             self._calib_active = False
             self._calib_slot = None
-            self._draw_hint_text("Calibration (apcorr) mode:\n"
-                                "Press a digit 1..5 to choose slot (A1..A5), then LEFT-click near a yellow source.\n"
-                                "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
-                                "Enter: save slot   R: reset slot")
+            self._draw_hint_text("Calibration mode:\nPress a digit 1..5 to choose slot (A1..A5), then LEFT-click near a yellow source.\n←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\nEnter: save slot   R: reset slot")
             return
 
         if self._calib_arm and event.key in ("1", "2", "3", "4", "5"):
-            self._calib_slot = int(event.key)
-            self._calib_arm = False
-            self._calib_active = True
-
-            # start with trail geometry (same height / annulus / theta / width if available)
-            if sel.width is None or not np.isfinite(sel.width):
-                # self._calib_width = 30.0
-                self._calib_width = (
-                    float(sel.width)
-                    if getattr(sel, "width", None) is not None and np.isfinite(float(sel.width))
-                    else 30.0
-                )
-            else:
-                self._calib_width = float(sel.width)
-
-            self._calib_center = None
-            self._calib_srclist_index = None
-
-            self._draw_hint_text(f"Calibration slot A{self._calib_slot} active:\n"
-                                "LEFT-click near a yellow source to place the same box/annulus centered on that star.\n"
-                                "←/→: adjust box length   [ ]: adjust height   { }: adjust annulus\n"
-                                "Enter: save slot   R: reset slot")
+            self._activate_calib_slot(sel, int(event.key))
             return
-
         # ---------- While calibration slot is active ----------
         if self._calib_active:
 

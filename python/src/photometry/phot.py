@@ -136,38 +136,91 @@ class PhotTable:
         data = mask.data
         return float(np.nansum(data)) if data is not None else None
 
-    def _bkg_stats_from_annulus(self, data: np.ndarray, ann: Optional[RectangularAnnulus]) -> Tuple[float, float]:
+    # def _bkg_stats_from_annulus(self, data: np.ndarray, ann: Optional[RectangularAnnulus]) -> Tuple[float, float]:
+    #     """
+    #     Mean and std in the annulus footprint; if not enough pixels, use global sigma-clipped stats.
+    #     Returns (mean, std) in the same units as `data` (counts or counts/s).
+    #     """
+    #     if ann is not None:
+    #         mask = ann.to_mask(method='exact')
+    #         vals: List[np.ndarray] = []
+    #         if isinstance(mask, (list, tuple)):
+    #             for m in mask:
+    #                 cut = m.cutout(data, fill_value=np.nan)
+    #                 w = m.data
+    #                 if cut is not None and w is not None:
+    #                     vals.append(cut[w > 0])
+    #             if vals:
+    #                 ann_values = np.concatenate(vals)
+    #             else:
+    #                 ann_values = np.array([])
+    #         else:
+    #             cut = mask.cutout(data, fill_value=np.nan)
+    #             w = mask.data
+    #             ann_values = cut[w > 0] if (cut is not None and w is not None) else np.array([])
+
+    #         finite = np.isfinite(ann_values)
+    #         if ann_values.size > 20 and finite.sum() >= 20:
+    #             mean, med, std = sigma_clipped_stats(ann_values[finite], sigma=3.0, maxiters=5)
+    #             return float(mean), float(std)
+
+    #     # Fallback: whole image (robust)
+    #     mean, med, std = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
+    #     return float(mean), float(std)
+
+    def _bkg_stats_from_annulus(
+        self,
+        data: np.ndarray,
+        ann: Optional[RectangularAnnulus],
+    ) -> Tuple[float, float]:
         """
-        Mean and std in the annulus footprint; if not enough pixels, use global sigma-clipped stats.
-        Returns (mean, std) in the same units as `data` (counts or counts/s).
+        Mean and std in the annulus footprint; if not enough pixels,
+        use global sigma-clipped stats.
+
+        Pixels outside the image and non-finite image pixels are excluded.
+        Returns (mean, std) in the same units as `data`.
         """
         if ann is not None:
-            mask = ann.to_mask(method='exact')
+            mask = ann.to_mask(method="exact")
             vals: List[np.ndarray] = []
+
             if isinstance(mask, (list, tuple)):
                 for m in mask:
-                    cut = m.cutout(data)
+                    cut = m.cutout(data, fill_value=np.nan)
                     w = m.data
+
                     if cut is not None and w is not None:
-                        vals.append(cut[w > 0])
-                if vals:
-                    ann_values = np.concatenate(vals)
+                        valid = (w > 0) & np.isfinite(cut)
+                        if np.any(valid):
+                            vals.append(cut[valid])
+
+                ann_values = np.concatenate(vals) if vals else np.array([])
+
+            else:
+                cut = mask.cutout(data, fill_value=np.nan)
+                w = mask.data
+
+                if cut is not None and w is not None:
+                    valid = (w > 0) & np.isfinite(cut)
+                    ann_values = cut[valid]
                 else:
                     ann_values = np.array([])
-            else:
-                cut = mask.cutout(data)
-                w = mask.data
-                ann_values = cut[w > 0] if (cut is not None and w is not None) else np.array([])
 
-            finite = np.isfinite(ann_values)
-            if ann_values.size > 20 and finite.sum() >= 20:
-                mean, med, std = sigma_clipped_stats(ann_values[finite], sigma=3.0, maxiters=5)
+            if ann_values.size >= 20:
+                mean, med, std = sigma_clipped_stats(
+                    ann_values,
+                    sigma=3.0,
+                    maxiters=5,
+                )
                 return float(mean), float(std)
 
-        # Fallback: whole image (robust)
-        mean, med, std = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
+        # Fallback: whole image, already robust to NaNs
+        mean, med, std = sigma_clipped_stats(
+            data[np.isfinite(data)],
+            sigma=3.0,
+            maxiters=5,
+        )
         return float(mean), float(std)
-
     def _data_unit_kind_and_bunit(self) -> (str, Optional[str]):
         """
         Inspect headers to decide if image is 'rate' or 'counts'.
@@ -207,30 +260,54 @@ class PhotTable:
     def _exptime_from(self) -> Optional[float]:
         return exptime_from_hduw(self.hduw)      
 
-    def _effective_area_from_mask_valid(self, ap, data: np.ndarray) -> float:
+    def _effective_area_from_mask_valid(
+        self,
+        ap,
+        data: np.ndarray,
+    ) -> float:
+        """
+        Effective aperture area actually covered by finite image pixels.
+
+        Fractional pixels from the exact aperture mask are preserved.
+        Pixels outside the image and non-finite image pixels contribute
+        zero effective area.
+        """
         mask = ap.to_mask(method="exact")
 
         if isinstance(mask, (list, tuple)):
             total = 0.0
+
             for m in mask:
-                cut = m.cutout(data)
+                cut = m.cutout(data, fill_value=np.nan)
                 w = m.data
+
                 if cut is None or w is None:
                     continue
-                valid = np.isfinite(cut) & (w > 0)
-                total += np.nansum(w[valid])
+
+                valid = np.isfinite(cut) & np.isfinite(w) & (w > 0)
+                total += np.sum(w[valid])
+
             return float(total)
 
-        cut = mask.cutout(data)
+        cut = mask.cutout(data, fill_value=np.nan)
         w = mask.data
+
         if cut is None or w is None:
             return 0.0
 
-        valid = np.isfinite(cut) & (w > 0)
-        return float(np.nansum(w[valid]))
+        valid = np.isfinite(cut) & np.isfinite(w) & (w > 0)
 
+        return float(np.sum(w[valid]))
 
-    def _effective_area_bg_from_mask_valid(self, ann, data: np.ndarray) -> Optional[float]:
+    def _effective_area_bg_from_mask_valid(
+        self,
+        ann,
+        data: np.ndarray,
+    ) -> Optional[float]:
+        """
+        Effective background-annulus area actually covered by finite
+        image pixels.
+        """
         if ann is None:
             return None
 
@@ -238,24 +315,30 @@ class PhotTable:
 
         if isinstance(mask, (list, tuple)):
             total = 0.0
+
             for m in mask:
-                cut = m.cutout(data)
+                cut = m.cutout(data, fill_value=np.nan)
                 w = m.data
+
                 if cut is None or w is None:
                     continue
-                valid = np.isfinite(cut) & (w > 0)
-                total += np.nansum(w[valid])
+
+                valid = np.isfinite(cut) & np.isfinite(w) & (w > 0)
+                total += np.sum(w[valid])
+
             return float(total)
 
-        cut = mask.cutout(data)
+        cut = mask.cutout(data, fill_value=np.nan)
         w = mask.data
+
         if cut is None or w is None:
             return None
 
-        valid = np.isfinite(cut) & (w > 0)
-        return float(np.nansum(w[valid]))
-    # ----------------- calibration -----------------
+        valid = np.isfinite(cut) & np.isfinite(w) & (w > 0)
 
+        return float(np.sum(w[valid]))
+
+    # ----------------- calibration -----------------
     def calibrate_against_source_list(
         self,
         source_list_file: str,
@@ -345,8 +428,6 @@ class PhotTable:
 
         Cap = float(phot_ap["aperture_sum"][0])
 
-        A_ap_geom = self._effective_area_from_mask(rectangular_aperture)
-
         A_ap_eff = self._effective_area_from_mask_valid(
             rectangular_aperture,
             data,
@@ -356,6 +437,24 @@ class PhotTable:
             rectangular_annulus,
             data,
         )
+
+        A_ap_geom = self._effective_area_from_mask(rectangular_aperture)
+
+        if not np.isfinite(A_ap_eff) or A_ap_eff <= 0:
+            raise ValueError(
+                "Invalid effective aperture area after masking "
+                "NaNs/out-of-image pixels."
+            )
+
+        if np.isfinite(A_ap_geom) and A_ap_geom > 0:
+            lost_frac = 1.0 - A_ap_eff / A_ap_geom
+
+            if np.isfinite(lost_frac) and lost_frac > 0.05:
+                print(
+                    f"[PHOT] WARN: aperture loses "
+                    f"{100.0 * lost_frac:.1f}% of area "
+                    "due to NaN/out-of-image pixels."
+                )
 
         if not np.isfinite(Cap):
             raise ValueError(
@@ -404,8 +503,17 @@ class PhotTable:
             # Uncertainty in rate:
             # Background variance in rate units:
             var_bkg_rate = np.nan
-            if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-                var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+            if (
+                np.isfinite(bkg_std)
+                and bkg_std > 0
+                and np.isfinite(A_ap_eff)
+                and A_bg_eff is not None
+                and np.isfinite(A_bg_eff)
+                and A_bg_eff > 0
+            ):
+                var_bkg_rate = (
+                    (A_ap_eff ** 2) * (bkg_std ** 2) / A_bg_eff
+                )
 
             # Effective exposure time from local background: t_eff ≈ mean/std^2 (if > 0)
             t_eff = None
@@ -489,8 +597,9 @@ class PhotTable:
         # Background variance in counts:
         var_bkg_counts = np.nan
         if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-            var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
-
+            var_bkg_counts = (
+                (A_ap_eff ** 2) * (bkg_std ** 2) / A_bg_eff
+            )
         # Source Poisson variance in counts:
         var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
 
@@ -533,18 +642,181 @@ class PhotTable:
             zp_source_kind=self._zp_prov["kind"],
         )
     
+    # def perform_trail_rate_photometry(
+    #     self,
+    #     rectangular_aperture: RectangularAperture,
+    #     rectangular_annulus: Optional[RectangularAnnulus] = None,
+    #     debug: bool = False,
+    # ) -> RatePhotometryResult:
+    #     """
+    #     Rate-only trail photometry:
+    #     - NO requires zero point
+    #     - Works for RATE images (counts/s/pix) and COUNTS images (counts/pix) using EXPTIME
+    #     - Returns net count-rate in ct/s
+    #     """
+
+    #     data = np.asarray(self.hduw.data, dtype=float)
+    #     if data.ndim != 2:
+    #         raise ValueError("HDUW data must be a 2-D image.")
+
+    #     unit_kind, bunit_str = self._data_unit_kind_and_bunit()
+
+    #     # Aperture sum (exact) and effective areas
+    #     # phot_ap = aperture_photometry(data, rectangular_aperture, method="exact")
+    #     # Cap = float(phot_ap["aperture_sum"][0])  # in native units: counts OR counts/s
+
+    #     # A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
+    #     # A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
+    #     finite_mask = ~np.isfinite(data)
+
+    #     data_safe = np.array(data, dtype=float, copy=True)
+    #     data_safe[finite_mask] = 0.0
+
+    #     phot_ap = aperture_photometry(
+    #         data_safe,
+    #         rectangular_aperture,
+    #         method="exact",
+    #         mask=finite_mask,
+    #     )
+
+    #     Cap = float(phot_ap["aperture_sum"][0])
+
+    #     A_ap_eff = self._effective_area_from_mask_valid(
+    #         rectangular_aperture,
+    #         data,
+    #     )
+
+    #     A_bg_eff = self._effective_area_bg_from_mask_valid(
+    #         rectangular_annulus,
+    #         data,
+    #     )
+
+    #     bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)  # per-pixel, native units
+
+    #     # ---------------- RATE images (counts/s/pix) ----------------
+    #     if unit_kind == "rate":
+    #         net_rate = Cap - bkg_mean * A_ap_eff  # ct/s
+
+    #         # uncertainty in rate units (same approach as your RATE branch)
+    #         var_bkg_rate = np.nan
+    #         if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
+    #             # Uncertainty of the background level estimated from the annulus.
+    #             # bkg_std is the per-pixel RMS; therefore
+    #             # Var(mean_bkg) = bkg_std^2 / A_bg_eff.
+    #             # The background contribution subtracted from the aperture is
+    #             # mean_bkg * A_ap_eff.
+    #             var_bkg_rate = (
+    #                 (A_ap_eff ** 2) * (bkg_std ** 2) / A_bg_eff
+    #             )
+
+    #         # try estimating t_eff as in your code; if not available, leave source term out
+    #         t_eff = None
+    #         if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
+    #             t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
+
+    #         var_src_rate = np.nan
+    #         if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
+    #             var_src_rate = Cap / t_eff
+
+    #         terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
+    #         net_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else None
+
+    #         if debug:
+    #             print("[TrailRatePhotometry DEBUG — RATE image]")
+    #             print(f"  BUNIT               = {bunit_str}")
+    #             print(f"  Cap (aperture_sum)  = {Cap:.6f} (counts/s)")
+    #             print(f"  bkg_mean            = {bkg_mean:.6e} (counts/s/pix)")
+    #             print(f"  bkg_rms             = {bkg_std:.6e} (counts/s/pix)")
+    #             print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
+    #             print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+    #             print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+
+    #         return RatePhotometryResult(
+    #             net_rate=float(net_rate),
+    #             net_rate_err=net_rate_err,
+    #             aper_sum=Cap,
+    #             bkg_per_pix=bkg_mean,
+    #             bkg_rms_per_pix=bkg_std,
+    #             A_ap_eff=A_ap_eff,
+    #             A_bg_eff=A_bg_eff,
+    #             unit_kind="rate",
+    #             exptime=None,
+    #             bunit_str=bunit_str,
+    #         )
+
+    #     # ---------------- COUNTS images (counts/pix) ----------------
+    #     exptime = self._exptime_from()
+    #     if exptime is None or not np.isfinite(exptime) or exptime <= 0:
+    #         raise ValueError("Invalid or missing EXPTIME for COUNTS image.")
+
+    #     # net counts in aperture:
+    #     net_counts = Cap - bkg_mean * A_ap_eff
+    #     net_rate = net_counts / exptime
+
+    #     # uncertainties in counts domain (your COUNTS branch)
+    #     # Cap already contains source + background counts in the aperture.
+    #     var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
+
+    #     # Uncertainty associated with estimating the mean background
+    #     # from the independent background region.
+    #     var_bkg_counts = np.nan
+    #     if (
+    #         np.isfinite(bkg_std)
+    #         and np.isfinite(A_ap_eff)
+    #         and A_bg_eff is not None
+    #         and np.isfinite(A_bg_eff)
+    #         and A_bg_eff > 0
+    #     ):
+    #         var_bkg_counts = (
+    #             (A_ap_eff ** 2) * (bkg_std ** 2) / A_bg_eff
+    #         )
+
+    #     terms_counts = [
+    #         v for v in (var_src_counts, var_bkg_counts)
+    #         if np.isfinite(v)
+    #     ]
+
+    #     Cnet_err = (
+    #         float(np.sqrt(max(sum(terms_counts), 0.0)))
+    #         if terms_counts else np.nan
+    #     )
+
+    #     count_rate_err = (
+    #         Cnet_err / exptime
+    #         if np.isfinite(Cnet_err)
+    #         else np.nan
+    #     )
+
+    #     if debug:
+    #         print("[TrailRatePhotometry DEBUG — COUNTS image]")
+    #         print(f"  BUNIT               = {bunit_str}")
+    #         print(f"  Cap (aperture_sum)  = {Cap:.3f} (counts)")
+    #         print(f"  bkg_mean            = {bkg_mean:.6e} (counts/pix)")
+    #         print(f"  bkg_rms             = {bkg_std:.6e} (counts/pix)")
+    #         print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
+    #         print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
+    #         print(f"  EXPTIME             = {exptime:.3f} (s)")
+    #         print(f"  net_counts          = {net_counts:.3f} (counts)")
+    #         print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+
+    #     return RatePhotometryResult(
+    #         net_rate=float(net_rate),
+    #         net_rate_err=net_rate_err,
+    #         aper_sum=Cap,
+    #         bkg_per_pix=bkg_mean,
+    #         bkg_rms_per_pix=bkg_std,
+    #         A_ap_eff=A_ap_eff,
+    #         A_bg_eff=A_bg_eff,
+    #         unit_kind="counts",
+    #         exptime=float(exptime),
+    #         bunit_str=bunit_str,
+    #     )
     def perform_trail_rate_photometry(
         self,
         rectangular_aperture: RectangularAperture,
         rectangular_annulus: Optional[RectangularAnnulus] = None,
         debug: bool = False,
     ) -> RatePhotometryResult:
-        """
-        Rate-only trail photometry:
-        - NO requires zero point
-        - Works for RATE images (counts/s/pix) and COUNTS images (counts/pix) using EXPTIME
-        - Returns net count-rate in ct/s
-        """
 
         data = np.asarray(self.hduw.data, dtype=float)
         if data.ndim != 2:
@@ -552,55 +824,25 @@ class PhotTable:
 
         unit_kind, bunit_str = self._data_unit_kind_and_bunit()
 
-        # Aperture sum (exact) and effective areas
-        # phot_ap = aperture_photometry(data, rectangular_aperture, method="exact")
-        # Cap = float(phot_ap["aperture_sum"][0])  # in native units: counts OR counts/s
-
-        # A_ap_eff = self._effective_area_from_mask(rectangular_aperture)
-        # A_bg_eff = self._effective_area_bg_from_mask(rectangular_annulus)
         finite_mask = ~np.isfinite(data)
-
         data_safe = np.array(data, dtype=float, copy=True)
         data_safe[finite_mask] = 0.0
 
-        phot_ap = aperture_photometry(
-            data_safe,
-            rectangular_aperture,
-            method="exact",
-            mask=finite_mask,
-        )
-
+        phot_ap = aperture_photometry(data_safe, rectangular_aperture, method="exact", mask=finite_mask)
         Cap = float(phot_ap["aperture_sum"][0])
 
-        A_ap_eff = self._effective_area_from_mask_valid(
-            rectangular_aperture,
-            data,
-        )
+        A_ap_eff = self._effective_area_from_mask_valid(rectangular_aperture, data)
+        A_bg_eff = self._effective_area_bg_from_mask_valid(rectangular_annulus, data)
+        bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)
 
-        A_bg_eff = self._effective_area_bg_from_mask_valid(
-            rectangular_annulus,
-            data,
-        )
-
-        bkg_mean, bkg_std = self._bkg_stats_from_annulus(data, rectangular_annulus)  # per-pixel, native units
-
-        # ---------------- RATE images (counts/s/pix) ----------------
+        # -------- RATE images --------
         if unit_kind == "rate":
-            net_rate = Cap - bkg_mean * A_ap_eff  # ct/s
+            net_rate = Cap - bkg_mean * A_ap_eff
 
-            # uncertainty in rate units (same approach as your RATE branch)
-            var_bkg_rate = np.nan
-            if np.isfinite(bkg_std) and bkg_std > 0 and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-                var_bkg_rate = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
+            var_bkg_rate = (A_ap_eff**2) * (bkg_std**2) / A_bg_eff if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and A_bg_eff is not None and np.isfinite(A_bg_eff) and A_bg_eff > 0 else np.nan
 
-            # try estimating t_eff as in your code; if not available, leave source term out
-            t_eff = None
-            if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0:
-                t_eff = max(bkg_mean / (bkg_std ** 2), 0.0)
-
-            var_src_rate = np.nan
-            if (t_eff is not None) and t_eff > 0 and np.isfinite(Cap) and Cap >= 0:
-                var_src_rate = Cap / t_eff
+            t_eff = max(bkg_mean / (bkg_std**2), 0.0) if np.isfinite(bkg_mean) and np.isfinite(bkg_std) and bkg_std > 0 else None
+            var_src_rate = Cap / t_eff if t_eff is not None and t_eff > 0 and np.isfinite(Cap) and Cap >= 0 else np.nan
 
             terms = [v for v in (var_bkg_rate, var_src_rate) if np.isfinite(v)]
             net_rate_err = float(np.sqrt(max(sum(terms), 0.0))) if terms else None
@@ -608,12 +850,12 @@ class PhotTable:
             if debug:
                 print("[TrailRatePhotometry DEBUG — RATE image]")
                 print(f"  BUNIT               = {bunit_str}")
-                print(f"  Cap (aperture_sum)  = {Cap:.6f} (counts/s)")
-                print(f"  bkg_mean            = {bkg_mean:.6e} (counts/s/pix)")
-                print(f"  bkg_rms             = {bkg_std:.6e} (counts/s/pix)")
-                print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
-                print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
-                print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+                print(f"  Cap                 = {Cap:.6f} counts/s")
+                print(f"  bkg_mean            = {bkg_mean:.6e} counts/s/pix")
+                print(f"  bkg_rms             = {bkg_std:.6e} counts/s/pix")
+                print(f"  A_ap_eff            = {A_ap_eff:.3f}")
+                print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f}")
+                print(f"  net_rate            = {net_rate:.6f} +/- {net_rate_err}")
 
             return RatePhotometryResult(
                 net_rate=float(net_rate),
@@ -628,37 +870,32 @@ class PhotTable:
                 bunit_str=bunit_str,
             )
 
-        # ---------------- COUNTS images (counts/pix) ----------------
+        # -------- COUNTS images --------
         exptime = self._exptime_from()
         if exptime is None or not np.isfinite(exptime) or exptime <= 0:
             raise ValueError("Invalid or missing EXPTIME for COUNTS image.")
 
-        # net counts in aperture:
         net_counts = Cap - bkg_mean * A_ap_eff
         net_rate = net_counts / exptime
 
-        # uncertainties in counts domain (your COUNTS branch)
-        var_bkg_counts = np.nan
-        if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and (A_bg_eff is not None) and np.isfinite(A_bg_eff) and A_bg_eff > 0:
-            var_bkg_counts = A_ap_eff * (bkg_std ** 2) * (1.0 + (A_ap_eff / A_bg_eff))
-
+        var_bkg_counts = (A_ap_eff**2) * (bkg_std**2) / A_bg_eff if np.isfinite(bkg_std) and np.isfinite(A_ap_eff) and A_bg_eff is not None and np.isfinite(A_bg_eff) and A_bg_eff > 0 else np.nan
         var_src_counts = Cap if np.isfinite(Cap) and Cap >= 0 else np.nan
 
         terms_counts = [v for v in (var_bkg_counts, var_src_counts) if np.isfinite(v)]
         net_counts_err = float(np.sqrt(max(sum(terms_counts), 0.0))) if terms_counts else None
-        net_rate_err = (net_counts_err / exptime) if (net_counts_err is not None) else None
+        net_rate_err = float(net_counts_err / exptime) if net_counts_err is not None else None
 
         if debug:
             print("[TrailRatePhotometry DEBUG — COUNTS image]")
             print(f"  BUNIT               = {bunit_str}")
-            print(f"  Cap (aperture_sum)  = {Cap:.3f} (counts)")
-            print(f"  bkg_mean            = {bkg_mean:.6e} (counts/pix)")
-            print(f"  bkg_rms             = {bkg_std:.6e} (counts/pix)")
-            print(f"  A_ap_eff            = {A_ap_eff:.3f} (pix)")
-            print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f} (pix)")
-            print(f"  EXPTIME             = {exptime:.3f} (s)")
-            print(f"  net_counts          = {net_counts:.3f} (counts)")
-            print(f"  net_rate            = {net_rate:.6f} (counts/s)")
+            print(f"  Cap                 = {Cap:.3f} counts")
+            print(f"  bkg_mean            = {bkg_mean:.6e} counts/pix")
+            print(f"  bkg_rms             = {bkg_std:.6e} counts/pix")
+            print(f"  A_ap_eff            = {A_ap_eff:.3f}")
+            print(f"  A_bg_eff            = {A_bg_eff if A_bg_eff is not None else np.nan:.3f}")
+            print(f"  EXPTIME             = {exptime:.3f} s")
+            print(f"  net_counts          = {net_counts:.3f} +/- {net_counts_err}")
+            print(f"  net_rate            = {net_rate:.6f} +/- {net_rate_err}")
 
         return RatePhotometryResult(
             net_rate=float(net_rate),
@@ -672,7 +909,6 @@ class PhotTable:
             exptime=float(exptime),
             bunit_str=bunit_str,
         )
-
 
 def predicted_om_ab_mag(
     config: ConfigParser,
@@ -885,17 +1121,17 @@ def compute_c2_for_star(
     c2 = float(r35.net_rate / r6.net_rate)
 
     # Propagación opcional si tienes net_rate_err
-    c2_err = None
-    if r6.net_rate_err is not None and r35.net_rate_err is not None:
-        e6 = float(r6.net_rate_err)
-        e35 = float(r35.net_rate_err)
-        c2_err = float(c2 * np.sqrt((e35 / r35.net_rate) ** 2 + (e6 / r6.net_rate) ** 2))
+    # c2_err = None
+    # if r6.net_rate_err is not None and r35.net_rate_err is not None:
+    #     e6 = float(r6.net_rate_err)
+    #     e35 = float(r35.net_rate_err)
+    #     c2_err = float(c2 * np.sqrt((e35 / r35.net_rate) ** 2 + (e6 / r6.net_rate) ** 2))
 
     return C2StarMeasurement(
         slot=-1,
         rate6=float(r6.net_rate), err6=r6.net_rate_err,
         rate35=float(r35.net_rate), err35=r35.net_rate_err,
-        c2=c2, c2_err=c2_err,
+        c2=c2, c2_err=None,
 
         aper_sum_6=float(r6.aper_sum),
         bkg_per_pix_6=float(r6.bkg_per_pix),

@@ -1,5 +1,6 @@
 # (note: we are including ad-hoc screened asteroids from pau:line 62 potomac and forward) WITH scr AS (  SELECT DISTINCT observation::text AS observation_id,object::text AS sso_name  FROM sso.screening_output_raw  where "L" like 'Y' or "L" like 'D'),xmm AS (  SELECT    observation_id,    sso_name,    ra_deg_1, dec_deg_1,    ra_deg_2, dec_deg_2,    filter,    xmatch_type,    v_mag_1,    v_mag_1_corrected,    mlim_obs  FROM sso.xmm_om_unique WHERE filter = 'L') SELECT  x.observation_id,  x.sso_name,  x.ra_deg_1, x.dec_deg_1,  x.ra_deg_2, x.dec_deg_2,  x.filter,  x.xmatch_type,  x.v_mag_1,  x.v_mag_1_corrected,  x.mlim_obs FROM scr s JOIN xmm x  ON x.observation_id = s.observation_id AND x.sso_name       = s.sso_name; 
 "observation_id";"sso_name";"ra_deg_1";"dec_deg_1";"ra_deg_2";"dec_deg_2";"filter";"xmatch_type";"v_mag_1";"v_mag_1_corrected";"mlim_obs"
+"0303561001";Fredtreasure;192.5848;-23.538895;192.62386;-23.529533;L;2;16.43;17.9142;20.256231
 "0781040101";Barbara;50.011715;0.46338347;50.32284;0.31945792;L;2;12.36;13.8442;20.696785
 "0743010501";Ohio;346.1028;0.15892091;346.18143;0.14519955;L;4;15.56;17.0442;19.943396
 "0803030301";Ada;257.42123;-24.233213;257.455;-24.233345;L;2;16.18;17.6642;20.112686
@@ -32,7 +33,6 @@
 "0148880101";Pesonen;143.07808;-11.071041;143.15459;-11.05193;L;2;18.93;20.4142;21.114185
 "0691840101";Guericke;333.35062;-17.186514;333.76288;-16.972826;L;3;19.01;20.4942;20.335546
 "0784401201";Jepejacobsen;126.58924;26.702383;126.680244;26.69026;L;2;17.43;18.9142;20.241419
-"0303561001";Fredtreasure;192.5848;-23.538895;192.62386;-23.529533;L;2;16.43;17.9142;20.256231
 "0673002347";"1981 EX26";351.8393;-0.87859577;352.49908;-0.5885451;L;3;18.71;20.1942;19.929981
 "0801681001";"1991 SK2";267.35052;-30.198545;267.41754;-30.179098;L;2;18.58;20.0642;20.259472
 "0605990501";"1998 FZ52";272.32047;-19.705824;272.3333;-19.702621;L;2;18.91;20.3942;19.66558
