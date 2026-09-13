@@ -143,19 +143,25 @@ echo
 
 # open_ds9 Richardbaum 0201902401 OMS404
 
-open_ds9 Dowling 0673002335 OMS409
+# open_ds9 Dowling 0673002335 OMS409
 
-open_ds9 Brouwer 0801681301 OMS006
-open_ds9 Brouwer 0801681301 OMS007
+ #open_ds9 Brouwer 0801681301 OMS006
+ #open_ds9 Brouwer 0801681301 OMS007
 
-open_ds9 Ada 0803030301 OMS006
-open_ds9 Ada 0803030301 OMS007
+ #open_ds9 Ada 0803030301 OMS006
+ #open_ds9 Ada 0803030301 OMS007
 
-open_ds9 Tampere 0740920301 OMS406
+# open_ds9 Tampere 0740920301 OMS406
 
-open_ds9 "1996_UT" 0412592501 OMS006
+# open_ds9 "1996_UT" 0412592501 OMS006
 
-open_ds9 Chrisclark 0670120401 OMS413
+# open_ds9 Chrisclark 0670120401 OMS413
+
+# open_ds9 Lucubratio 0110980101 OMS406
+#open_ds9 Lictoria 0012440101 OMS410
+
+open_ds9 Guericke 0691840101 OMS413
+open_ds9 Guericke 0691840101 OMS414
 
 echo
 echo "============================================================"

@@ -471,16 +471,13 @@ def action_plots(config: ConfigParser) -> Path:
     cache_path = out_dir / "rocks_cache.json"
 
 
-    # Frame-level photometry table kept as the audit trail of the actual
-    # measurements.  mag_ab_apcorr is intentionally omitted: the current
-    # calibration already reports the final calibrated AB magnitude in mag_ab,
-    # so keeping both columns would duplicate the same quantity in the paper.
     latex_columns = [
         "target_name",
         "observation_id",
         "fits_name",
         "count_rate",
         "mag_ab",
+        "mag_ab_apcorr",
         "v_mag_1",
     ]
 
@@ -616,17 +613,11 @@ def action_plots(config: ConfigParser) -> Path:
         phot_csv=phot_csv,
         out_tex=out_tex,
         columns=latex_columns,
-        caption=(
-            "Frame-level UVW1 photometric measurements retained after screening and "
-            "photometric extraction. The table reports the final corrected count rate, "
-            "the calibrated AB magnitude, and the SSOSS predicted visual magnitude at "
-            "the observation epoch."
-        ),
+        caption="Photometry output exported from the pipeline.",
         label="tab:photometry_output",
         max_rows=None,
         rocks_cache_path=cache_path,
         landscape=False,
-        valid_photometry_only=True,
     )
 
     export_l_reference_multifilter_table_from_config(
@@ -1107,173 +1098,6 @@ def _finite_float(x: Any) -> Optional[float]:
     return v if v is not None and math.isfinite(v) else None
 
 
-def export_reflectance_object_latex_table(
-    output_dir: Path,
-    object_rows: list[dict[str, Any]],
-) -> Path:
-    """Export the object-level UVW1 colour/reflectance catalogue used in Results."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tex_path = output_dir / "reflectance_by_object.tex"
-
-    def _display_name(row: dict[str, Any]) -> str:
-        name = _normalize_name(str(row.get("target_name") or "").strip())
-        number = row.get("rocks_number")
-        if number not in (None, "", "None", "nan"):
-            try:
-                return f"({int(float(number))}) {name}"
-            except Exception:
-                pass
-        return name
-
-    def _fmt_plain(value: Any, ndigits: int, missing: str = "--") -> str:
-        v = _finite_float(value)
-        if v is None:
-            return missing
-        return f"{v:.{ndigits}f}"
-
-    def _fmt_diameter(value: Any) -> str:
-        v = _finite_float(value)
-        if v is None:
-            return "--"
-        if abs(v) >= 1000:
-            return f"{v:.0f}"
-        if abs(v) >= 100:
-            return f"{v:.1f}"
-        if abs(v) >= 10:
-            return f"{v:.1f}"
-        return f"{v:.2f}"
-
-    solar_values = [
-        _finite_float(r.get("solar_uvw1_ab_minus_v"))
-        for r in object_rows
-        if _finite_float(r.get("solar_uvw1_ab_minus_v")) is not None
-    ]
-    solar_colour = solar_values[0] if solar_values else 2.8466
-    solar_colour_s = f"{solar_colour:.4f}"
-
-    lines = [
-        r"\begin{table*}[t]",
-        r"\centering",
-        r"\small",
-        r"\setlength{\tabcolsep}{2.2pt}",
-        r"\renewcommand{\arraystretch}{1.05}",
-        r"\begin{tabular}{lcccccccc}",
-        r"\toprule",
-        (
-            r"Asteroid & Tax. & Group & $N_{\rm fr}$ & "
-            r"$\mathrm{UVW1}-V_{\rm pred}$ & $R_{\rm UVW1}/R_V$ & "
-            r"$p_V$ & $p_{\rm UVW1}^{\rm proxy}$ & $D$ (km) \\"
-        ),
-        r"\midrule",
-    ]
-
-    for row in sorted(object_rows, key=lambda r: str(r.get("target_name", "")).lower()):
-        display_name = _latex_escape(_display_name(row))
-
-        tax = str(row.get("taxonomy_class") or "").strip()
-        fam = str(row.get("taxonomy_family") or "").strip()
-        tax_s = _latex_escape(tax) if tax else "--"
-        fam_s = "--" if fam in {"", "UNK"} else _latex_escape("Other" if fam == "OTHER" else fam)
-
-        n_frames = row.get("n_frames")
-        try:
-            n_frames_s = str(int(n_frames))
-        except Exception:
-            n_frames_s = "--"
-
-        colour = _finite_float(row.get("uvw1_minus_vpred"))
-        colour_err = _finite_float(row.get("uvw1_minus_vpred_err_phot"))
-        colour_s, colour_err_s = _format_value_err_pair(colour, colour_err, sig_err=2)
-        if colour_s and colour_err_s:
-            colour_tex = rf"${colour_s} \pm {colour_err_s}$"
-        elif colour_s:
-            colour_tex = colour_s
-        else:
-            colour_tex = "--"
-
-        refl = _finite_float(row.get("reflectance_uv_v"))
-        refl_err = _finite_float(row.get("reflectance_err_phot"))
-        ext_lo = _finite_float(row.get("reflectance_err_external_lo"))
-        ext_hi = _finite_float(row.get("reflectance_err_external_hi"))
-        refl_s, refl_err_s = _format_value_err_pair(refl, refl_err, sig_err=2)
-        if refl_s:
-            if refl_err_s:
-                refl_tex = rf"${refl_s} \pm {refl_err_s}"
-            else:
-                refl_tex = rf"${refl_s}"
-            if ext_lo is not None and ext_hi is not None:
-                # Keep the asymmetric Vpred-validation envelope separate from the
-                # formal photometric term.  Values are rounded to the same number
-                # of decimals used for the displayed reflectance where possible.
-                try:
-                    ndec = len(refl_s.split(".", 1)[1]) if "." in refl_s else 0
-                    lo_s = f"{ext_lo:.{ndec}f}"
-                    hi_s = f"{ext_hi:.{ndec}f}"
-                except Exception:
-                    lo_s = f"{ext_lo:.3f}"
-                    hi_s = f"{ext_hi:.3f}"
-                refl_tex += rf"{{}}_{{-{lo_s}}}^{{+{hi_s}}}"
-            refl_tex += "$"
-        else:
-            refl_tex = "--"
-
-        pv_s = _fmt_plain(row.get("pv"), 4)
-
-        puv = _finite_float(row.get("puvw1_proxy"))
-        puv_err = _finite_float(row.get("puvw1_proxy_err_phot"))
-        puv_s, puv_err_s = _format_value_err_pair(puv, puv_err, sig_err=2)
-        if puv_s and puv_err_s:
-            puv_tex = rf"${puv_s} \pm {puv_err_s}$"
-        elif puv_s:
-            puv_tex = puv_s
-        else:
-            puv_tex = "--"
-
-        d_s = _fmt_diameter(row.get("diameter_km"))
-
-        lines.append(
-            " & ".join(
-                [
-                    display_name,
-                    tax_s,
-                    fam_s,
-                    n_frames_s,
-                    colour_tex,
-                    refl_tex,
-                    pv_s,
-                    puv_tex,
-                    d_s,
-                ]
-            )
-            + r" \\"
-        )
-
-    lines.extend(
-        [
-            r"\bottomrule",
-            r"\end{tabular}",
-            (
-                r"\caption{Object-level UVW1 photometric and reflectance results. "
-                r"$N_{\rm fr}$ is the number of valid UVW1 frames combined for each object. "
-                r"The colour is defined as $\mathrm{UVW1}-V_{\rm pred}$. "
-                rf"The solar-normalised reflectance adopts $(\mathrm{{UVW1}}-V)_\odot={solar_colour_s}$ mag. "
-                r"For $R_{\rm UVW1}/R_V$, the symmetric term is the propagated formal photometric "
-                r"uncertainty; the asymmetric term is the envelope obtained after including the "
-                r"empirical $V_{\rm pred}$ validation scatter. "
-                r"The quantity $p_{\rm UVW1}^{\rm proxy}=p_V(R_{\rm UVW1}/R_V)$ is a visible-albedo-scaled "
-                r"UVW1 reflectance proxy, not an independently measured UV geometric albedo.}"
-            ),
-            r"\label{tab:uvw1_reflectance_results}",
-            r"\end{table*}",
-            "",
-        ]
-    )
-
-    tex_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"[PLOTS][REFLECTANCE] Saved: {tex_path}")
-    return tex_path
-
-
 def export_reflectance_products(
     output_dir: Path,
     object_rows: list[dict[str, Any]],
@@ -1330,11 +1154,6 @@ def export_reflectance_products(
         for row in sorted(object_rows, key=lambda r: str(r.get("target_name", "")).lower()):
             writer.writerow({k: row.get(k) for k in fieldnames})
     print(f"[PLOTS][REFLECTANCE] Saved: {csv_path}")
-
-    export_reflectance_object_latex_table(
-        output_dir=output_dir,
-        object_rows=object_rows,
-    )
 
     order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
     families_present = [
@@ -1997,7 +1816,6 @@ def export_photometry_csv_to_latex(
     max_rows: Optional[int] = None,
     rocks_cache_path: Optional[Path] = None,
     landscape: bool = True,
-    valid_photometry_only: bool = False,
 ) -> None:
     """
     Export selected columns from photometry_output.csv to a LaTeX table.
@@ -2045,7 +1863,7 @@ def export_photometry_csv_to_latex(
         # lines.append(r"\toprule")
         lines.append(r"\begin{table*}[t]")
         lines.append(r"\centering")
-        lines.append(r"\small")
+        lines.append(r"\scriptsize")
         lines.append(r"\setlength{\tabcolsep}{3pt}")
         lines.append(r"\renewcommand{\arraystretch}{1.03}")
 
@@ -2055,7 +1873,6 @@ def export_photometry_csv_to_latex(
             for c in columns
         )
         lines.append(rf"\begin{{tabular}}{{{col_spec}}}")
-        lines.append(r"\toprule")
 
         # Header
         header = " & ".join(_latex_header_name(c) for c in columns) + r" \\"
@@ -2081,11 +1898,6 @@ def export_photometry_csv_to_latex(
         #         break
                 # Rows
         for row in reader:
-            # The manuscript table is a record of actual frame-level photometry,
-            # not of screening placeholders/null rows.
-            if valid_photometry_only and _to_float(row.get("mag_ab")) is None:
-                continue
-
             # Parse numeric pairs we want to format consistently
             cr = _to_float(row.get("count_rate"))
             cr_err = _to_float(row.get("count_rate_err"))
@@ -2152,7 +1964,7 @@ def export_photometry_csv_to_latex(
         lines.append(r"\bottomrule")
         lines.append(r"\end{tabular}")
         lines.append(rf"\caption{{{_latex_escape(caption)}}}")
-        lines.append(rf"\label{{{label}}}")
+        lines.append(rf"\label{{{_latex_escape(label)}}}")
         lines.append(r"\end{table*}")
 
     out_tex.write_text("\n".join(lines), encoding="utf-8")
