@@ -852,6 +852,195 @@ def _compute_c1_if_needed(
 
     return C1, C1_err, out_csv
 
+
+# ---------------------------------------------------------------------
+# Optional Horizons overlay for the photometry UI
+# ---------------------------------------------------------------------
+def _resolve_horizons_dir(config: ConfigParser) -> Path | None:
+    """Return [PHOTOMETRY] HORIZONS_DIR, or None when not configured."""
+    raw = config.get("PHOTOMETRY", "HORIZONS_DIR", fallback="").strip()
+    if not raw:
+        return None
+
+    root = Path(raw).expanduser()
+    if not root.is_absolute():
+        root = (Path.cwd() / root).resolve()
+    return root
+
+
+def _find_horizons_region(
+    config: ConfigParser,
+    *,
+    target: str,
+    observation_id: str,
+    fits_name: str,
+) -> Path | None:
+    """
+    Find the frame-specific Horizons DS9 region generated for this exact FITS.
+
+    Expected basename:
+        <FITS stem>_horizons.reg
+
+    Preferred layout:
+        HORIZONS_DIR/<target>/<obsid>/<basename>
+    with a target_underscored fallback. A final recursive exact-basename
+    search makes this robust to older output layouts.
+    """
+    root = _resolve_horizons_dir(config)
+    if root is None:
+        return None
+    if not root.exists():
+        print(f"[PHOT][HORIZONS] WARN: HORIZONS_DIR does not exist: {root}")
+        return None
+
+    reg_name = f"{Path(fits_name).stem}_horizons.reg"
+    target_variants = []
+    for t in (str(target).strip(), str(target).strip().replace(" ", "_")):
+        if t and t not in target_variants:
+            target_variants.append(t)
+
+    for t in target_variants:
+        candidate = root / t / str(observation_id) / reg_name
+        if candidate.is_file():
+            return candidate
+
+    matches = list(root.rglob(reg_name))
+    if not matches:
+        return None
+
+    # Prefer a match whose parent path contains the expected OBSID/target.
+    def score(path: Path) -> tuple[int, int]:
+        parts = {x.lower() for x in path.parts}
+        obs_ok = int(str(observation_id).lower() in parts)
+        target_ok = int(any(t.lower() in parts for t in target_variants))
+        return (obs_ok, target_ok)
+
+    matches.sort(key=score, reverse=True)
+    if len(matches) > 1:
+        print(
+            f"[PHOT][HORIZONS] WARN: {len(matches)} region matches for {reg_name}; "
+            f"using {matches[0]}"
+        )
+    return matches[0]
+
+
+def _parse_ds9_coord(token: str, *, is_ra: bool) -> float:
+    """Parse one FK5/ICRS DS9 coordinate token into decimal degrees."""
+    from astropy.coordinates import Angle
+    import astropy.units as u
+
+    t = str(token).strip().strip('"').strip("'")
+    # DS9 commonly writes RA in sexagesimal hourangle when ':' is present.
+    if is_ra and ":" in t:
+        return float(Angle(t, unit=u.hourangle).degree)
+    return float(Angle(t, unit=u.deg).degree)
+
+
+def _read_horizons_endpoints_from_reg(reg_path: Path) -> tuple[tuple[float, float], tuple[float, float]]:
+    """
+    Read HSTART/HEND sky positions from a DS9 FK5/ICRS region file.
+
+    The parser deliberately ignores the exact region primitive (point/circle/
+    ellipse/box); it only needs the first RA,Dec pair from the line carrying
+    text/metadata containing HSTART or HEND.
+    """
+    text = Path(reg_path).read_text(encoding="utf-8", errors="replace")
+
+    endpoints: dict[str, tuple[float, float]] = {}
+    world_system = None
+    shape_re = re.compile(
+        r"(?:point|circle|ellipse|box|diamond|cross)\s*\(\s*([^,]+)\s*,\s*([^,\)]+)",
+        flags=re.IGNORECASE,
+    )
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        low = line.lower()
+        if low in {"fk5", "icrs"}:
+            world_system = low
+            continue
+        if low in {"image", "physical", "detector", "linear"}:
+            world_system = low
+            continue
+
+        # Current Horizons region files use labels such as:
+        #   text={H START}
+        #   text={H END}
+        # Older files may use HSTART/HEND. Parse the DS9 text attribute
+        # explicitly and normalize whitespace/punctuation so both forms work
+        # without confusing ORIG START / ORIG END.
+        text_match = re.search(
+            r"text\s*=\s*\{([^}]*)\}",
+            line,
+            flags=re.IGNORECASE,
+        )
+        label_text = text_match.group(1) if text_match else ""
+        label_key = re.sub(r"[^a-z0-9]+", "", label_text.lower())
+
+        label = None
+        if label_key == "hstart":
+            label = "HSTART"
+        elif label_key == "hend":
+            label = "HEND"
+        if label is None:
+            continue
+
+        if world_system not in (None, "fk5", "icrs"):
+            raise ValueError(
+                f"{label} is in DS9 coordinate system {world_system!r}, not FK5/ICRS"
+            )
+
+        m = shape_re.search(line)
+        if m is None:
+            continue
+
+        ra = _parse_ds9_coord(m.group(1), is_ra=True)
+        dec = _parse_ds9_coord(m.group(2), is_ra=False)
+        if np.isfinite(ra) and np.isfinite(dec):
+            endpoints[label] = (ra, dec)
+
+    if "HSTART" not in endpoints or "HEND" not in endpoints:
+        raise ValueError(
+            f"Could not find both HSTART and HEND in {reg_path.name}; "
+            f"found={sorted(endpoints)}"
+        )
+
+    return endpoints["HSTART"], endpoints["HEND"]
+
+
+def _add_optional_horizons_overlay(
+    config: ConfigParser,
+    ui: UI,
+    *,
+    target: str,
+    observation_id: str,
+    fits_name: str,
+    wcs,
+) -> Path | None:
+    """Load and draw frame-specific HSTART/HEND when available."""
+    reg_path = _find_horizons_region(
+        config,
+        target=target,
+        observation_id=observation_id,
+        fits_name=fits_name,
+    )
+    if reg_path is None:
+        print(f"[PHOT][HORIZONS] No region for {fits_name}; using SSOSS POS1/POS2 only.")
+        return None
+
+    try:
+        hstart, hend = _read_horizons_endpoints_from_reg(reg_path)
+        ui.add_horizons_markers(hstart=hstart, hend=hend, wcs=wcs)
+        print(
+            "[PHOT][HORIZONS] overlay loaded: "
+            f"{reg_path} | HSTART={hstart} HEND={hend}"
+        )
+        return reg_path
+    except Exception as e:
+        print(f"[PHOT][HORIZONS] WARN: could not draw {reg_path}: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------
 # Main callable used by start.py
 # ---------------------------------------------------------------------
@@ -917,8 +1106,19 @@ def action_photometry(config: ConfigParser, screening_row: dict[str, Any]) -> No
 
     try:
         ui.add_markers(ra1=ra1, dec1=dec1, ra2=ra2, dec2=dec2, wcs=wcs)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[PHOT] WARN: could not draw SSOSS POS1/POS2: {e}")
+
+    # Optional frame-specific JPL Horizons overlay. This is display-only and
+    # does not alter the photometry coordinates/selection/calibration.
+    _add_optional_horizons_overlay(
+        config,
+        ui,
+        target=target,
+        observation_id=observation_id,
+        fits_name=fits_name,
+        wcs=wcs,
+    )
 
     # SRCLIST overlay (optional)
     srclist_path = find_srclist_in_same_dir(fits_path)
