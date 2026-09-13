@@ -47,26 +47,37 @@ IMAGE_FITS = Path(
     "/Users/eracero/workspace/tfm-viu/temp/0821871601/L/"
     "P0821871601OMS006FSIMAGL000.FTZ"
 )
-SRCLIST_FITS = Path(
-    "/Users/eracero/workspace/tfm-viu/temp/0821871601/L/"
-    "P0821871601OMS006SWSRLIL000.FTZ"
-)
+SRCLIST_FITS = Path("/Users/eracero/workspace/tfm-viu/temp/0821871601/L/P0821871601OMS006SWSRLIL000.FTZ")
 
 # Identify the contaminating source robustly by catalogue source number.
 # The same row also has SRC_ID=160 in the file you inspected.
 SRCNUM = 56
 
 # ---- Large-box Transvaalia measurement copied from the pipeline output ----
-RH_LARGE = 1.5185142560758396             # ct/s, raw background-subtracted R_h
-RH_LARGE_ERR = 0.038237590348100675       # ct/s
-NET_COUNTS_LARGE = 7592.571280379198      # counts
-NET_COUNTS_ERR_LARGE = 191.18795174050337 # counts
-APER_COUNTS_LARGE = 28525.892600506544    # counts
-BKG_MEAN_LARGE = 21.1337826786801         # counts/pix
-BKG_RMS_LARGE = 3.151241630204799         # counts/pix
-A_AP_EFF_LARGE = 990.5146484375            # pix
-A_BG_EFF_LARGE = 1213.7666015625           # pix
+RH_LARGE = 1.5289815091162549
+RH_LARGE_ERR = 0.03816341068373059
+
+NET_COUNTS_LARGE = 7644.9075455812745
+NET_COUNTS_ERR_LARGE = 190.81705341865293
+
+APER_COUNTS_LARGE = 28483.670928032137
+BKG_MEAN_LARGE = 21.096807833737547
+BKG_RMS_LARGE = 3.1374132852838397
+
+A_AP_EFF_LARGE = 987.7685546875
+A_BG_EFF_LARGE = 1211.4873046875
 EXPTIME_EXPECTED = 5000.0                  # s
+
+# RH_LARGE = 1.5185142560758396             # ct/s, raw background-subtracted R_h
+# RH_LARGE_ERR = 0.038237590348100675       # ct/s
+# NET_COUNTS_LARGE = 7592.571280379198      # counts
+# NET_COUNTS_ERR_LARGE = 191.18795174050337 # counts
+# APER_COUNTS_LARGE = 28525.892600506544    # counts
+# BKG_MEAN_LARGE = 21.1337826786801         # counts/pix
+# BKG_RMS_LARGE = 3.151241630204799         # counts/pix
+# A_AP_EFF_LARGE = 990.5146484375            # pix
+# A_BG_EFF_LARGE = 1213.7666015625           # pix
+
 
 # Large aperture geometry.
 # h=13 px is the standard 6"-equivalent box used in this extraction.
