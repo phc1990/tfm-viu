@@ -1,26 +1,26 @@
 \begin{table}[t]
 \centering
 \scriptsize
-\caption{UVW1--$V_{\rm pred}$ colour by taxonomic family.}
+\caption{Mean UVW1--$V$ colour by taxonomic family.}
 \label{tab:taxonomy_colour_summary}
-\begin{tabular}{lrrr}
+\begin{tabular}{lrrrr}
 \hline
-Family & $N$ & $\mathrm{median}(\mathrm{UVW1}-V_{\rm pred})$ & $\sigma_{16-84}$ \\
+Family & $N$ & $\langle V \rangle$ & $\langle m_{\rm UVW1} \rangle$ & $\langle {\rm UVW1}-V \rangle$ \\
 \hline
-C & 5 & 3.228 & 0.354 \\
-S & 7 & 3.895 & 0.560 \\
-X & 4 & 3.700 & 0.320 \\
-D & 2 & 3.615 & 0.056 \\
-V & 2 & 2.699 & 0.285 \\
-B & 3 & 3.132 & 0.239 \\
-L & 1 & 3.854 & -- \\
-K & 2 & 3.410 & 0.024 \\
-OTHER & 6 & 3.090 & 0.223 \\
-UNK & 3 & 3.445 & 0.183 \\
+C & 5 & 17.501 & 20.332 & 3.097 $\pm$ 0.032 \\
+S & 6 & 16.200 & 19.742 & 3.405 $\pm$ 0.024 \\
+X & 5 & 17.350 & 20.603 & 3.185 $\pm$ 0.074 \\
+D & 2 & 16.510 & 19.695 & 3.267 $\pm$ 0.083 \\
+V & 1 & 17.670 & 20.837 & 3.167 $\pm$ 0.309 \\
+B & 3 & 17.198 & 20.264 & 3.023 $\pm$ 0.070 \\
+L & 1 & 12.360 & 15.883 & 3.523 $\pm$ 0.025 \\
+K & 2 & 17.630 & 20.991 & 3.354 $\pm$ 0.210 \\
+OTHER & 5 & 16.332 & 19.227 & 2.916 $\pm$ 0.028 \\
+UNK & 4 & 16.418 & 19.904 & 3.363 $\pm$ 0.009 \\
 \hline
 \end{tabular}
 
 \vspace{0.5ex}
 \footnotesize
-The reported colour is the median of the object-level $\mathrm{UVW1}-V_{\rm pred}$ colours within each taxonomic family. The scatter is defined as $\sigma_{16-84}=(P_{84}-P_{16})/2$.
+The colour uncertainty corresponds to the uncertainty of the weighted mean using the UVW1 photometric errors. The intrinsic object-to-object scatter is reported in the accompanying CSV file.
 \end{table}

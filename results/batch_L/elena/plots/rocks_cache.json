@@ -95,6 +95,14 @@
     "rocks_number": 3529,
     "taxonomy_class": "X"
   },
+  "Epstein": {
+    "_status": "ok",
+    "diameter_km": 17.025,
+    "pv": 0.1161,
+    "rocks_name": "Epstein",
+    "rocks_number": 2928,
+    "taxonomy_class": "X"
+  },
   "Flagstaff": {
     "_status": "ok",
     "diameter_km": 11.434,
@@ -262,6 +270,14 @@
     "rocks_name": "Tampere",
     "rocks_number": 1497,
     "taxonomy_class": "X"
+  },
+  "The": {
+    "_status": "ok",
+    "diameter_km": 4.21,
+    "pv": 0.2874,
+    "rocks_name": "The",
+    "rocks_number": 5408,
+    "taxonomy_class": ""
   },
   "Tinette": {
     "_status": "ok",
