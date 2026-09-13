@@ -601,6 +601,106 @@ class UI:
         )
 
 
+
+    def add_horizons_markers(self, hstart, hend, wcs=None):
+        """
+        Draw frame-specific JPL Horizons start/end positions without replacing
+        the existing SSOSS POS1/POS2 marker layer.
+
+        HSTART: cyan square + label
+        HEND:   magenta square + label
+
+        No connecting line is drawn intentionally: it tends to add visual
+        clutter and the two endpoint markers already define the predicted trail.
+        """
+        W = wcs or getattr(self, "wcs", None)
+        if W is None:
+            try:
+                W = extract_wcs_from_hduw(self.hduw)
+            except Exception:
+                W = None
+        if W is None:
+            print("[UI][HORIZONS] WARN: no WCS; cannot draw HSTART/HEND.")
+            return []
+
+        def _to_pixel(pos):
+            if pos is None or len(pos) != 2:
+                return None
+            ra, dec = float(pos[0]), float(pos[1])
+            sc = SkyCoord(ra * u.deg, dec * u.deg, frame="icrs")
+            x, y = W.world_to_pixel(sc)
+            x = float(np.atleast_1d(x)[0])
+            y = float(np.atleast_1d(y)[0])
+            if not (np.isfinite(x) and np.isfinite(y)):
+                return None
+            return x, y
+
+        xy_start = _to_pixel(hstart)
+        xy_end = _to_pixel(hend)
+
+        # Independent artist layer: never erase SSOSS markers.
+        if not hasattr(self, "_horizons_artists"):
+            self._horizons_artists = []
+        for artist in self._horizons_artists:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._horizons_artists = []
+
+        xlim0 = self.ax.get_xlim()
+        ylim0 = self.ax.get_ylim()
+        arts = []
+
+        pix_transform = None
+        try:
+            if hasattr(self.ax, "get_transform"):
+                pix_transform = self.ax.get_transform("pixel")
+        except Exception:
+            pix_transform = None
+
+        def _draw(xy, *, label, edgecolor):
+            if xy is None:
+                print(f"[UI][HORIZONS] WARN: {label} could not be projected to pixels.")
+                return
+            x, y = xy
+            scatter_kwargs = dict(
+                marker="s",
+                s=110,
+                facecolors="none",
+                edgecolors=edgecolor,
+                linewidths=1.8,
+                alpha=0.98,
+                zorder=14,
+            )
+            if pix_transform is not None:
+                scatter_kwargs["transform"] = pix_transform
+            arts.append(self.ax.scatter([x], [y], **scatter_kwargs))
+            arts.append(
+                self.ax.annotate(
+                    label,
+                    (x, y),
+                    xytext=(7, 7),
+                    textcoords="offset points",
+                    color=edgecolor,
+                    fontsize=8,
+                    fontweight="bold",
+                    zorder=15,
+                    annotation_clip=False,
+                )
+            )
+            print(f"[UI][HORIZONS] {label} pix=({x:.2f},{y:.2f})")
+
+        _draw(xy_start, label="HSTART", edgecolor="cyan")
+        _draw(xy_end, label="HEND", edgecolor="magenta")
+
+        self.ax.set_xlim(xlim0)
+        self.ax.set_ylim(ylim0)
+        self._horizons_artists = arts
+        self.update()
+        return arts
+
+
     def select_trail(self, selector):
         self._selector = selector
         self._draw_hint_text()
