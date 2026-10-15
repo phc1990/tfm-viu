@@ -47,6 +47,14 @@
     "rocks_number": 8573,
     "taxonomy_class": "C"
   },
+  "Mucha": {
+    "_status": "ok",
+    "diameter_km": 9.273,
+    "pv": 0.2402,
+    "rocks_name": "Mucha",
+    "rocks_number": 5122,
+    "taxonomy_class": "S"
+  },
   "Pluto": {
     "_status": "ok",
     "diameter_km": 2374.0,
@@ -62,6 +70,14 @@
     "rocks_name": "Potomac",
     "rocks_number": 1345,
     "taxonomy_class": "X"
+  },
+  "Sarpedon": {
+    "_status": "ok",
+    "diameter_km": 77.912,
+    "pv": 0.066,
+    "rocks_name": "Sarpedon",
+    "rocks_number": 2223,
+    "taxonomy_class": "Z"
   },
   "Seeligeria": {
     "_status": "ok",

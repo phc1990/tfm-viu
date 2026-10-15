@@ -1661,14 +1661,32 @@ def action_plots(config: ConfigParser) -> Path:
                 }
             )
 
+    # export_taxonomy_colour_summary_tables(
+    #     output_dir=out_dir,
+    #     xs=xs,
+    #     ys=ys,
+    #     yerrs=yerrs,
+    #     buckets=buckets,
+    # )
     export_taxonomy_colour_summary_tables(
+        output_dir=out_dir,
+        object_rows=reflectance_objects,
+    )
+    # export_uvw1_vs_vpred_taxonomy_plot(
+    #     output_dir=out_dir,
+    #     xs=xs,
+    #     ys=ys,
+    #     yerrs=yerrs,
+    #     buckets=buckets,
+    # )
+    export_uvw1_vs_vpred_taxonomy_plot(
         output_dir=out_dir,
         xs=xs,
         ys=ys,
         yerrs=yerrs,
         buckets=buckets,
+        object_rows=reflectance_objects,
     )
-
     export_reflectance_products(
         output_dir=out_dir,
         object_rows=reflectance_objects,
@@ -1740,180 +1758,577 @@ def action_plots(config: ConfigParser) -> Path:
     #     else:
     #         print(f"[PLOTS][FIT] {b}: skipped (N={len(xb)} or insufficient valid errors)")
 
-    # 4) Plot grouped by taxonomic family, with error bars
-    plt.figure(figsize=(7.0, 5.5))
+    # # 4) Plot grouped by taxonomic family, with error bars
+    # plt.figure(figsize=(7.0, 5.5))
 
-    order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
-    plotted = 0
+    # order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
+    # plotted = 0
 
-    for b in order:
-        idx = [i for i, bb in enumerate(buckets) if bb == b]
+    # for b in order:
+    #     idx = [i for i, bb in enumerate(buckets) if bb == b]
+    #     if not idx:
+    #         continue
+
+    #     xb = [xs[i] for i in idx]
+    #     yb = [ys[i] for i in idx]
+
+    #     xeb = [xerrs[i] if xerrs[i] is not None else 0.0 for i in idx]
+    #     yeb = [yerrs[i] if yerrs[i] is not None else 0.0 for i in idx]
+
+    #     has_xerr = any(e > 0 for e in xeb)
+    #     has_yerr = any(e > 0 for e in yeb)
+
+    #     # ------------------------------------------------------------
+    #     # Plot points
+    #     # ------------------------------------------------------------
+    #     if b == "UNK":
+    #         # Unknown taxonomies: grey diagnostic points only.
+    #         container = plt.errorbar(
+    #             xb,
+    #             yb,
+    #             xerr=xeb if has_xerr else None,
+    #             yerr=yeb if has_yerr else None,
+    #             fmt="o",
+    #             markersize=4,
+    #             capsize=2,
+    #             elinewidth=0.8,
+    #             linewidth=0.8,
+    #             label="UNK",
+    #             alpha=0.55,
+    #             color="0.65",
+    #             ecolor="0.65",
+    #             markerfacecolor="0.65",
+    #             markeredgecolor="0.65",
+    #         )
+
+    #         plotted += len(xb)
+    #         print(f"[PLOTS][FIT] UNK: skipped; unknown taxonomy")
+    #         continue
+
+    #     # Known taxonomic families: default matplotlib colours.
+    #     container = plt.errorbar(
+    #         xb,
+    #         yb,
+    #         xerr=xeb if has_xerr else None,
+    #         yerr=yeb if has_yerr else None,
+    #         fmt="o",
+    #         markersize=4,
+    #         capsize=2,
+    #         elinewidth=0.8,
+    #         linewidth=0.8,
+    #         label=b,
+    #         alpha=0.85,
+    #     )
+
+    #     plotted += len(xb)
+
+    #     # ------------------------------------------------------------
+    #     # Weighted family fit
+    #     # ------------------------------------------------------------
+    #     fit = fit_line(xb, yb, yeb)
+
+    #     if fit is None:
+    #         print(f"[PLOTS][FIT] {b}: skipped (N={len(xb)} or insufficient valid errors)")
+    #         continue
+
+    #     m, c, m_err, c_err = fit
+
+    #     xx = np.linspace(min(xs), max(xs), 100)
+    #     yy = m * xx + c
+
+    #     try:
+    #         fit_color = container.lines[0].get_color()
+    #     except Exception:
+    #         fit_color = None
+
+    #     plt.plot(
+    #         xx,
+    #         yy,
+    #         linestyle="-",
+    #         linewidth=1.0,
+    #         color=fit_color,
+    #     )
+
+    #     if math.isfinite(m_err) and math.isfinite(c_err):
+    #         print(
+    #             f"[PLOTS][FIT] {b}: "
+    #             f"slope={m:.4f}±{m_err:.4f}, "
+    #             f"intercept={c:.4f}±{c_err:.4f}, "
+    #             f"N={len(xb)}"
+    #         )
+    #     else:
+    #         print(
+    #             f"[PLOTS][FIT] {b}: "
+    #             f"slope={m:.4f}, intercept={c:.4f}, N={len(xb)}"
+    #         )
+
+    # # Optional C/S UV−V threshold estimate using object-level colours.
+    # c_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "C"]
+    # s_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "S"]
+
+    # if len(c_colors) >= 2 and len(s_colors) >= 2:
+    #     muC = float(np.mean(c_colors))
+    #     sC = float(np.std(c_colors, ddof=1))
+    #     muS = float(np.mean(s_colors))
+    #     sS = float(np.std(s_colors, ddof=1))
+
+    #     if sC > 0 and sS > 0:
+    #         thr = gaussian_intersection(muC, sC, muS, sS)
+    #         if thr is not None:
+    #             print(
+    #                 f"[PLOTS][THR] UV−V: "
+    #                 f"muC={muC:.3f}±{sC:.3f}, "
+    #                 f"muS={muS:.3f}±{sS:.3f}, "
+    #                 f"threshold≈{thr:.3f}"
+    #             )
+
+    #             # xx = np.linspace(min(xs), max(xs), 100)
+    #             # yy = xx + thr
+    #             # plt.plot(
+    #             #     xx,
+    #             #     yy,
+    #             #     linestyle="--",
+    #             #     linewidth=0.9,
+    #             #     label="C/S UV−V threshold",
+    #             # )
+    #         else:
+    #             print(
+    #                 f"[PLOTS][THR] UV−V: "
+    #                 f"muC={muC:.3f}±{sC:.3f}, "
+    #                 f"muS={muS:.3f}±{sS:.3f}, "
+    #                 f"threshold skipped; Gaussian intersection returned None."
+    #             )
+    #     else:
+    #         print("[PLOTS][THR] C/S scatter is zero; threshold skipped.")
+    # else:
+    #     print("[PLOTS][THR] Not enough C/S points to estimate threshold robustly.")
+        
+    # # plt.xlabel("v_mag_1")
+    # # plt.ylabel("mag_ab_apcorr")
+    # # plt.title("mag_ab_apcorr vs v_mag_1 (1 point per object; mean UV−V; rocks taxonomy)")
+    # plt.xlabel(r"$V_{\rm pred}$")
+    # plt.ylabel(r"$m_{\rm UVW1,AB}$")
+    # plt.title(r"UVW1 AB magnitude vs predicted $V$ by taxonomic family")
+    # plt.legend()
+
+    # # y=x reference (color=0)
+    # # mn = min(min(xs), min(ys))
+    # # mx = max(max(xs), max(ys))
+    # # plt.plot([mn, mx], [mn, mx], linestyle="--")
+
+    # plt.tight_layout()
+    # plt.savefig(out_png, dpi=200)
+    # plt.close()
+
+    # print(f"[PLOTS] Read: {phot_csv}")
+    # print(f"[PLOTS] Total rows: {total_rows} | Valid rows: {valid_rows}")
+    # print(f"[PLOTS] Objects plotted: {len(measurements)} (points: {plotted})")
+    # print(
+    #     f"[PLOTS] rocks resolved: "
+    #     f"taxonomy={resolved_tax}/{len(measurements)}, "
+    #     f"pV={resolved_pv}/{len(measurements)}, "
+    #     f"D={resolved_d}/{len(measurements)}"
+    # )
+    # print(f"[PLOTS] Saved: {out_png}")
+
+    # return out_png
+
+def export_uvw1_vs_vpred_taxonomy_plot(
+    output_dir: Path,
+    xs: list[float],                      # V_pred
+    ys: list[float],                      # m_UVW1,AB
+    yerrs: list[Optional[float]],
+    buckets: list[str],
+    object_rows: list[dict[str, Any]],
+
+) -> None:
+    """
+    Plot object-level UVW1 AB magnitude versus predicted V magnitude,
+    coloured by taxonomic family, and overplot the C- and S-complex
+    mean-colour relations as unit-slope dashed lines.
+
+    Outputs:
+      - uvw1_vs_vpred_taxonomy.png
+      - uvw1_vs_vpred_taxonomy.pdf
+    """
+
+
+        
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    png_path = output_dir / "uvw1_vs_vpred_taxonomy.png"
+    pdf_path = output_dir / "uvw1_vs_vpred_taxonomy.pdf"
+    
+    family_colors = {
+        "C": "tab:blue",
+        "S": "tab:orange",
+        "X": "tab:green",
+        "B": "tab:purple",
+        "D": "tab:red",
+        "V": "tab:brown",
+        "L": "tab:pink",
+        "K": "tab:olive",
+        "OTHER": "0.45",
+        "UNK": "0.65",
+    }
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.5))
+
+    order = ["C", "S", "X", "B", "D", "V", "L", "K", "OTHER", "UNK"]
+
+    # def _weighted_mean_colour_for_family(fam: str) -> Optional[float]:
+        # idx = [i for i, b in enumerate(buckets) if b == fam]
+        # if not idx:
+        #     return None
+
+        # cols = np.array([ys[i] - xs[i] for i in idx], dtype=float)
+        # errs = np.array(
+        #     [
+        #         np.nan if yerrs[i] is None else float(yerrs[i])
+        #         for i in idx
+        #     ],
+        #     dtype=float,
+        # )
+
+        # valid = np.isfinite(cols) & np.isfinite(errs) & (errs > 0)
+        # if not np.any(valid):
+        #     # fallback unweighted
+        #     valid2 = np.isfinite(cols)
+        #     if not np.any(valid2):
+        #         return None
+        #     return float(np.mean(cols[valid2]))
+
+        # w = 1.0 / errs[valid] ** 2
+        # return float(np.sum(w * cols[valid]) / np.sum(w))
+    def _weighted_mean_colour_for_family(fam: str) -> Optional[float]:
+        fam_rows = [
+            r for r in object_rows
+            if r.get("taxonomy_family") == fam
+            and _finite_float(r.get("uvw1_minus_vpred")) is not None
+        ]
+
+        if not fam_rows:
+            return None
+
+        cols = np.array(
+            [
+                float(r["uvw1_minus_vpred"])
+                for r in fam_rows
+            ],
+            dtype=float,
+        )
+
+        errs = np.array(
+            [
+                np.nan
+                if _finite_float(r.get("uvw1_minus_vpred_err_phot")) is None
+                else float(r["uvw1_minus_vpred_err_phot"])
+                for r in fam_rows
+            ],
+            dtype=float,
+        )
+
+        valid = np.isfinite(cols) & np.isfinite(errs) & (errs > 0)
+
+        if not np.any(valid):
+            return float(np.mean(cols))
+
+        weights = 1.0 / errs[valid] ** 2
+
+        return float(
+            np.sum(weights * cols[valid]) / np.sum(weights)
+        )
+    # ------------------------------------------------------------
+    # Scatter points by family
+    # ------------------------------------------------------------
+    for fam in order:
+        idx = [i for i, b in enumerate(buckets) if b == fam]
         if not idx:
             continue
 
         xb = [xs[i] for i in idx]
         yb = [ys[i] for i in idx]
-
-        xeb = [xerrs[i] if xerrs[i] is not None else 0.0 for i in idx]
-        yeb = [yerrs[i] if yerrs[i] is not None else 0.0 for i in idx]
-
-        has_xerr = any(e > 0 for e in xeb)
+        yeb = [0.0 if yerrs[i] is None else float(yerrs[i]) for i in idx]
         has_yerr = any(e > 0 for e in yeb)
 
-        # ------------------------------------------------------------
-        # Plot points
-        # ------------------------------------------------------------
-        if b == "UNK":
-            # Unknown taxonomies: grey diagnostic points only.
-            container = plt.errorbar(
-                xb,
-                yb,
-                xerr=xeb if has_xerr else None,
+        col = family_colors.get(fam, "0.5")
+
+        if fam == "UNK":
+            ax.errorbar(
+                xb, yb,
                 yerr=yeb if has_yerr else None,
                 fmt="o",
                 markersize=4,
                 capsize=2,
                 elinewidth=0.8,
                 linewidth=0.8,
-                label="UNK",
                 alpha=0.55,
-                color="0.65",
-                ecolor="0.65",
-                markerfacecolor="0.65",
-                markeredgecolor="0.65",
+                color=col,
+                ecolor=col,
+                markerfacecolor=col,
+                markeredgecolor=col,
+                label="UNK",
             )
+        elif fam == "OTHER":
+            ax.errorbar(
+                xb, yb,
+                yerr=yeb if has_yerr else None,
+                fmt="o",
+                markersize=4,
+                capsize=2,
+                elinewidth=0.8,
+                linewidth=0.8,
+                alpha=0.70,
+                color=col,
+                ecolor=col,
+                markerfacecolor="none",
+                markeredgecolor=col,
+                label="OTHER",
+            )
+        else:
+            ax.errorbar(
+                xb, yb,
+                yerr=yeb if has_yerr else None,
+                fmt="o",
+                markersize=4,
+                capsize=2,
+                elinewidth=0.8,
+                linewidth=0.8,
+                alpha=0.85,
+                color=col,
+                ecolor=col,
+                markerfacecolor=col,
+                markeredgecolor=col,
+                label=fam,
+            )
+    # ------------------------------------------------------------
+    # C and S mean-colour lines (unit slope)
+    # ------------------------------------------------------------
+    x_all = np.array(xs, dtype=float)
+    x_min = float(np.nanmin(x_all))
+    x_max = float(np.nanmax(x_all))
+    xx = np.linspace(x_min, x_max, 200)
 
-            plotted += len(xb)
-            print(f"[PLOTS][FIT] UNK: skipped; unknown taxonomy")
+    line_info = []
+    # for fam in ("C", "S"):
+    #     mean_col = _weighted_mean_colour_for_family(fam)
+    #     if mean_col is None:
+    #         continue
+
+    #     yy = xx + mean_col
+    #     line, = ax.plot(
+    #         xx,
+    #         yy,
+    #         linestyle="--",
+    #         linewidth=1.2,
+    #         label=rf"{fam}: $\langle \mathrm{{UVW1}}-V_{{\rm pred}}\rangle = {mean_col:.3f}$",
+    #     )
+    #     line_info.append((fam, mean_col))
+    for fam in ("C", "S"):
+        mean_col = _weighted_mean_colour_for_family(fam)
+        if mean_col is None:
             continue
 
-        # Known taxonomic families: default matplotlib colours.
-        container = plt.errorbar(
-            xb,
-            yb,
-            xerr=xeb if has_xerr else None,
-            yerr=yeb if has_yerr else None,
+        yy = xx + mean_col
+        ax.plot(
+            xx,
+            yy,
+            linestyle="--",
+            linewidth=1.4,
+            color=family_colors[fam],
+            label=rf"{fam}: $\langle \mathrm{{UVW1}}-V_{{\rm pred}}\rangle = {mean_col:.3f}$",
+        )
+    # ------------------------------------------------------------
+    # Labels and save
+    # ------------------------------------------------------------
+    ax.set_xlabel(r"$V_{\rm pred}$")
+    ax.set_ylabel(r"$m_{\rm UVW1,AB}$")
+    ax.set_title(r"Measured UVW1 magnitude versus predicted $V$")
+    ax.legend(fontsize="small", ncol=2)
+
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=200)
+    fig.savefig(pdf_path)
+    plt.close(fig)
+
+    print(f"[PLOTS] Saved: {png_path}")
+    print(f"[PLOTS] Saved: {pdf_path}")
+    for fam, mean_col in line_info:
+        print(f"[PLOTS][UVW1-VPRED] {fam}: mean colour = {mean_col:.3f} mag")
+
+
+def plot_reflectance_vs_pv(
+    output_dir: Path,
+    object_rows: list[dict[str, Any]],
+) -> None:
+    """
+    Plot solar-normalised UVW1 reflectance versus visible geometric albedo.
+
+    Uses one point per object and formal photometric reflectance errors.
+    Spearman statistics are printed for the full sample, for the sample
+    excluding Pluto, and for the main taxonomic groups when possible.
+    """
+
+    rows = [
+        r for r in object_rows
+        if _finite_float(r.get("pv")) is not None
+        and _finite_float(r.get("reflectance_uv_v")) is not None
+    ]
+
+    if not rows:
+        print("[PLOTS][REFLECTANCE] No valid pV--reflectance pairs; plot skipped.")
+        return
+
+    family_colors = {
+        "C": "tab:blue",
+        "S": "tab:orange",
+        "X": "tab:green",
+        "B": "tab:purple",
+        "D": "tab:red",
+        "V": "tab:brown",
+        "L": "tab:pink",
+        "K": "tab:olive",
+        "OTHER": "0.45",
+        "UNK": "0.65",
+    }
+
+    order = [
+        "C", "S", "X", "D", "V", "B", "A", "L", "K", "Q",
+        "OTHER", "UNK",
+    ]
+
+    families_present = [
+        fam for fam in order
+        if any(r.get("taxonomy_family") == fam for r in rows)
+    ]
+
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+
+    for fam in families_present:
+        fam_rows = [
+            r for r in rows
+            if r.get("taxonomy_family") == fam
+        ]
+
+        if not fam_rows:
+            continue
+
+        x = np.array(
+            [float(r["pv"]) for r in fam_rows],
+            dtype=float,
+        )
+        y = np.array(
+            [float(r["reflectance_uv_v"]) for r in fam_rows],
+            dtype=float,
+        )
+        ye = np.array(
+            [
+                float(r.get("reflectance_err_phot") or 0.0)
+                for r in fam_rows
+            ],
+            dtype=float,
+        )
+
+        kwargs = dict(
             fmt="o",
-            markersize=4,
+            markersize=5,
             capsize=2,
             elinewidth=0.8,
             linewidth=0.8,
-            label=b,
             alpha=0.85,
+            label=fam,
         )
 
-        plotted += len(xb)
+        colour = family_colors.get(fam)
+        if colour is not None:
+            kwargs["color"] = colour
 
-        # ------------------------------------------------------------
-        # Weighted family fit
-        # ------------------------------------------------------------
-        fit = fit_line(xb, yb, yeb)
-
-        if fit is None:
-            print(f"[PLOTS][FIT] {b}: skipped (N={len(xb)} or insufficient valid errors)")
-            continue
-
-        m, c, m_err, c_err = fit
-
-        xx = np.linspace(min(xs), max(xs), 100)
-        yy = m * xx + c
-
-        try:
-            fit_color = container.lines[0].get_color()
-        except Exception:
-            fit_color = None
-
-        plt.plot(
-            xx,
-            yy,
-            linestyle="-",
-            linewidth=1.0,
-            color=fit_color,
+        ax.errorbar(
+            x,
+            y,
+            yerr=ye if np.any(ye > 0) else None,
+            **kwargs,
         )
 
-        if math.isfinite(m_err) and math.isfinite(c_err):
-            print(
-                f"[PLOTS][FIT] {b}: "
-                f"slope={m:.4f}±{m_err:.4f}, "
-                f"intercept={c:.4f}±{c_err:.4f}, "
-                f"N={len(xb)}"
-            )
-        else:
-            print(
-                f"[PLOTS][FIT] {b}: "
-                f"slope={m:.4f}, intercept={c:.4f}, N={len(xb)}"
-            )
-
-    # Optional C/S UV−V threshold estimate using object-level colours.
-    c_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "C"]
-    s_colors = [col for col, bb in zip(uv_minus_v, buckets) if bb == "S"]
-
-    if len(c_colors) >= 2 and len(s_colors) >= 2:
-        muC = float(np.mean(c_colors))
-        sC = float(np.std(c_colors, ddof=1))
-        muS = float(np.mean(s_colors))
-        sS = float(np.std(s_colors, ddof=1))
-
-        if sC > 0 and sS > 0:
-            thr = gaussian_intersection(muC, sC, muS, sS)
-            if thr is not None:
-                print(
-                    f"[PLOTS][THR] UV−V: "
-                    f"muC={muC:.3f}±{sC:.3f}, "
-                    f"muS={muS:.3f}±{sS:.3f}, "
-                    f"threshold≈{thr:.3f}"
-                )
-
-                # xx = np.linspace(min(xs), max(xs), 100)
-                # yy = xx + thr
-                # plt.plot(
-                #     xx,
-                #     yy,
-                #     linestyle="--",
-                #     linewidth=0.9,
-                #     label="C/S UV−V threshold",
-                # )
-            else:
-                print(
-                    f"[PLOTS][THR] UV−V: "
-                    f"muC={muC:.3f}±{sC:.3f}, "
-                    f"muS={muS:.3f}±{sS:.3f}, "
-                    f"threshold skipped; Gaussian intersection returned None."
-                )
-        else:
-            print("[PLOTS][THR] C/S scatter is zero; threshold skipped.")
-    else:
-        print("[PLOTS][THR] Not enough C/S points to estimate threshold robustly.")
-        
-    # plt.xlabel("v_mag_1")
-    # plt.ylabel("mag_ab_apcorr")
-    # plt.title("mag_ab_apcorr vs v_mag_1 (1 point per object; mean UV−V; rocks taxonomy)")
-    plt.xlabel(r"$V_{\rm pred}$")
-    plt.ylabel(r"$m_{\rm UVW1,AB}$")
-    plt.title(r"UVW1 AB magnitude vs predicted $V$ by taxonomic family")
-    plt.legend()
-
-    # y=x reference (color=0)
-    # mn = min(min(xs), min(ys))
-    # mx = max(max(xs), max(ys))
-    # plt.plot([mn, mx], [mn, mx], linestyle="--")
-
-    plt.tight_layout()
-    plt.savefig(out_png, dpi=200)
-    plt.close()
-
-    print(f"[PLOTS] Read: {phot_csv}")
-    print(f"[PLOTS] Total rows: {total_rows} | Valid rows: {valid_rows}")
-    print(f"[PLOTS] Objects plotted: {len(measurements)} (points: {plotted})")
-    print(
-        f"[PLOTS] rocks resolved: "
-        f"taxonomy={resolved_tax}/{len(measurements)}, "
-        f"pV={resolved_pv}/{len(measurements)}, "
-        f"D={resolved_d}/{len(measurements)}"
+    # Solar-coloured reference
+    ax.axhline(
+        1.0,
+        linestyle="--",
+        linewidth=1.0,
+        color="0.45",
     )
-    print(f"[PLOTS] Saved: {out_png}")
 
-    return out_png
+    ax.set_xlim(left=0.0)
+    ax.set_ylim(bottom=0.0)
+
+    ax.set_xlabel(r"$p_V$")
+    ax.set_ylabel(r"$R_{\rm UVW1}/R_V$")
+    # ax.set_title(
+    #     "Solar-normalised UVW1 reflectance versus visible geometric albedo"
+    # )
+
+    ax.legend(
+        fontsize="small",
+        ncol=2,
+    )
+
+    fig.tight_layout()
+
+    _save_plot_pair(
+        fig,
+        output_dir,
+        "reflectance_vs_pv",
+    )
+
+    # ------------------------------------------------------------
+    # Spearman diagnostics
+    # ------------------------------------------------------------
+    try:
+        from scipy.stats import spearmanr
+
+        def _report_spearman(label, subset):
+            if len(subset) < 3:
+                return
+
+            xx = np.array(
+                [float(r["pv"]) for r in subset],
+                dtype=float,
+            )
+            yy = np.array(
+                [float(r["reflectance_uv_v"]) for r in subset],
+                dtype=float,
+            )
+
+            rho, pval = spearmanr(xx, yy)
+
+            print(
+                f"[PLOTS][REFLECTANCE][SPEARMAN] "
+                f"{label}: N={len(subset)}, "
+                f"rho={rho:.4f}, p={pval:.5g}"
+            )
+
+        _report_spearman("all", rows)
+
+        rows_no_pluto = [
+            r for r in rows
+            if _normalize_name(
+                str(r.get("target_name", ""))
+            ).strip().lower() != "pluto"
+        ]
+        _report_spearman("excluding Pluto", rows_no_pluto)
+
+        for fam in ("C", "S", "X"):
+            fam_rows = [
+                r for r in rows
+                if r.get("taxonomy_family") == fam
+            ]
+            _report_spearman(fam, fam_rows)
+
+    except Exception as exc:
+        print(
+            "[PLOTS][REFLECTANCE] "
+            f"Spearman statistics skipped: {exc}"
+        )
 
 
 def _save_plot_pair(fig: Any, output_dir: Path, stem: str) -> tuple[Path, Path]:
@@ -2169,27 +2584,113 @@ def export_reflectance_products(
         if any(r.get("taxonomy_family") == fam for r in object_rows)
     ]
 
+    # # ------------------------------------------------------------
+    # # 1) Taxonomy -- R: object points + median and P16/P84
+    # # ------------------------------------------------------------
+    # fig, ax = plt.subplots(figsize=(7.1, 4.8))
+    # for xpos, fam in enumerate(families_present):
+    #     rows = [r for r in object_rows if r.get("taxonomy_family") == fam]
+    #     if not rows:
+    #         continue
+
+    #     n = len(rows)
+    #     if n == 1:
+    #         jitter = np.array([0.0])
+    #     else:
+    #         jitter = np.linspace(-0.18, 0.18, n)
+
+    #     rvals = np.array([float(r["reflectance_uv_v"]) for r in rows], dtype=float)
+    #     rerrs = np.array([
+    #         float(r.get("reflectance_err_phot") or 0.0) for r in rows
+    #     ], dtype=float)
+    #     xx = np.full(n, xpos, dtype=float) + jitter
+
+    #     ax.errorbar(
+    #         xx,
+    #         rvals,
+    #         yerr=rerrs if np.any(rerrs > 0) else None,
+    #         fmt="o",
+    #         markersize=4,
+    #         capsize=2,
+    #         elinewidth=0.8,
+    #         linewidth=0.8,
+    #         alpha=0.80,
+    #     )
+
+    #     med = float(np.median(rvals))
+    #     if n >= 2:
+    #         p16, p84 = np.percentile(rvals, [16, 84])
+    #         ax.errorbar(
+    #             xpos,
+    #             med,
+    #             yerr=np.array([[med - p16], [p84 - med]]),
+    #             fmt="D",
+    #             markersize=6,
+    #             capsize=4,
+    #             linewidth=1.2,
+    #         )
+    #     else:
+    #         ax.plot(xpos, med, "D", markersize=6)
+
+    # ax.axhline(1.0, linestyle="--", linewidth=1.0)
+    # ax.set_xticks(range(len(families_present)), families_present)
+    # ax.set_ylabel(r"$R_{\rm UVW1}/R_V$")
+    # ax.set_xlabel("Taxonomic family")
+    # # ax.set_title("Solar-normalised UVW1 reflectance by taxonomic family")
+    # _save_plot_pair(fig, output_dir, "reflectance_by_taxonomy")
+
     # ------------------------------------------------------------
     # 1) Taxonomy -- R: object points + median and P16/P84
     # ------------------------------------------------------------
+
+    family_colors = {
+        "C": "tab:blue",
+        "S": "tab:orange",
+        "X": "tab:green",
+        "D": "tab:red",
+        "V": "tab:brown",
+        "B": "tab:purple",
+        "L": "tab:pink",
+        "K": "tab:olive",
+        "OTHER": "0.45",
+        "UNK": "0.65",
+    }
+
     fig, ax = plt.subplots(figsize=(7.1, 4.8))
+
     for xpos, fam in enumerate(families_present):
-        rows = [r for r in object_rows if r.get("taxonomy_family") == fam]
+        rows = [
+            r for r in object_rows
+            if r.get("taxonomy_family") == fam
+        ]
         if not rows:
             continue
 
+        color = family_colors.get(fam, "0.5")
+
         n = len(rows)
+
         if n == 1:
             jitter = np.array([0.0])
         else:
             jitter = np.linspace(-0.18, 0.18, n)
 
-        rvals = np.array([float(r["reflectance_uv_v"]) for r in rows], dtype=float)
-        rerrs = np.array([
-            float(r.get("reflectance_err_phot") or 0.0) for r in rows
-        ], dtype=float)
+        rvals = np.array(
+            [float(r["reflectance_uv_v"]) for r in rows],
+            dtype=float,
+        )
+
+        rerrs = np.array(
+            [
+                float(r.get("reflectance_err_phot") or 0.0)
+                for r in rows
+            ],
+            dtype=float,
+        )
+
         xx = np.full(n, xpos, dtype=float) + jitter
 
+        # Individual objects
         ax.errorbar(
             xx,
             rvals,
@@ -2199,31 +2700,75 @@ def export_reflectance_products(
             capsize=2,
             elinewidth=0.8,
             linewidth=0.8,
-            alpha=0.80,
+            alpha=0.75,
+            color=color,
+            markerfacecolor=color,
+            markeredgecolor=color,
         )
 
+        # Median and P16--P84 interval
         med = float(np.median(rvals))
+
         if n >= 2:
             p16, p84 = np.percentile(rvals, [16, 84])
+
             ax.errorbar(
                 xpos,
                 med,
-                yerr=np.array([[med - p16], [p84 - med]]),
+                yerr=np.array([
+                    [med - p16],
+                    [p84 - med],
+                ]),
                 fmt="D",
-                markersize=6,
+                markersize=7,
                 capsize=4,
+                elinewidth=1.2,
                 linewidth=1.2,
+                color=color,
+                markerfacecolor=color,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                zorder=5,
             )
-        else:
-            ax.plot(xpos, med, "D", markersize=6)
 
-    ax.axhline(1.0, linestyle="--", linewidth=1.0)
-    ax.set_xticks(range(len(families_present)), families_present)
+        else:
+            ax.plot(
+                xpos,
+                med,
+                marker="D",
+                linestyle="none",
+                markersize=7,
+                color=color,
+                markerfacecolor=color,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                zorder=5,
+            )
+
+    ax.axhline(
+        1.0,
+        linestyle="--",
+        linewidth=1.0,
+        color="0.45",
+    )
+
+    ax.set_xticks(
+        range(len(families_present)),
+        families_present,
+    )
+
     ax.set_ylabel(r"$R_{\rm UVW1}/R_V$")
     ax.set_xlabel("Taxonomic family")
-    ax.set_title("Solar-normalised UVW1 reflectance by taxonomic family")
-    _save_plot_pair(fig, output_dir, "reflectance_by_taxonomy")
 
+    # ax.set_title(
+    #     "Solar-normalised UVW1 reflectance by taxonomic family"
+    # )
+
+    _save_plot_pair(
+        fig,
+        output_dir,
+        "reflectance_by_taxonomy",
+    )
     # ------------------------------------------------------------
     # 2) p_UVW1 proxy vs p_V
     # ------------------------------------------------------------
@@ -2263,6 +2808,13 @@ def export_reflectance_products(
         ax.legend(fontsize="small", ncol=2)
         _save_plot_pair(fig, output_dir, "puvw1_proxy_vs_pv")
 
+    # ------------------------------------------------------------
+    # R_UVW1 / R_V vs p_V
+    # ------------------------------------------------------------
+    plot_reflectance_vs_pv(
+        output_dir=output_dir,
+        object_rows=object_rows,
+    )
     # ------------------------------------------------------------
     # 3) R vs diameter
     # ------------------------------------------------------------
@@ -3175,12 +3727,16 @@ def export_photometry_csv_to_latex(
     out_tex.write_text("\n".join(lines), encoding="utf-8")
     print(f"[PLOTS][LATEX] Saved: {out_tex}")
 
+# def export_taxonomy_colour_summary_tables(
+#     output_dir: Path,
+#     xs: list[float],
+#     ys: list[float],
+#     yerrs: list[Optional[float]],
+#     buckets: list[str],
+# ) -> None:
 def export_taxonomy_colour_summary_tables(
     output_dir: Path,
-    xs: list[float],
-    ys: list[float],
-    yerrs: list[Optional[float]],
-    buckets: list[str],
+    object_rows: list[dict[str, Any]],
 ) -> None:
     """
     Export summary table of UVW1−V colour by taxonomic family.
@@ -3196,80 +3752,160 @@ def export_taxonomy_colour_summary_tables(
       - The unweighted std reflects object-to-object scatter.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-
     rows: list[dict[str, Any]] = []
 
     order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
 
     for fam in order:
-        idx = [i for i, b in enumerate(buckets) if b == fam]
-        if not idx:
+        fam_rows = [
+            r for r in object_rows
+            if r.get("taxonomy_family") == fam
+            and _finite_float(r.get("uvw1_minus_vpred")) is not None
+        ]
+
+        if not fam_rows:
             continue
 
-        v_vals = np.array([xs[i] for i in idx], dtype=float)
-        uv_vals = np.array([ys[i] for i in idx], dtype=float)
-        col_vals = uv_vals - v_vals
-
-        err_vals = np.array(
+        # One colour per object. Objects with several UVW1 frames have
+        # already been combined upstream into their object-level colour.
+        col_vals = np.array(
             [
-                np.nan if yerrs[i] is None else float(yerrs[i])
-                for i in idx
+                float(r["uvw1_minus_vpred"])
+                for r in fam_rows
             ],
             dtype=float,
         )
 
-        n = len(idx)
+        err_vals = np.array(
+            [
+                np.nan
+                if _finite_float(r.get("uvw1_minus_vpred_err_phot")) is None
+                else float(r["uvw1_minus_vpred_err_phot"])
+                for r in fam_rows
+            ],
+            dtype=float,
+        )
 
-        mean_v = float(np.mean(v_vals))
-        mean_uv = float(np.mean(uv_vals))
-        mean_col = float(np.mean(col_vals))
+        n = len(col_vals)
 
+        # Unweighted object-to-object scatter.
         if n >= 2:
             std_col = float(np.std(col_vals, ddof=1))
-            sem_col = float(std_col / math.sqrt(n))
         else:
             std_col = math.nan
-            sem_col = math.nan
 
+        # Taxonomic weighted mean from the OBJECT-LEVEL colours.
         valid_w = np.isfinite(err_vals) & (err_vals > 0)
 
         if np.any(valid_w):
             weights = 1.0 / err_vals[valid_w] ** 2
+
             weighted_mean_col = float(
                 np.sum(weights * col_vals[valid_w]) / np.sum(weights)
             )
-            weighted_mean_col_err = float(math.sqrt(1.0 / np.sum(weights)))
+
+            weighted_mean_col_err = float(
+                math.sqrt(1.0 / np.sum(weights))
+            )
         else:
-            weighted_mean_col = mean_col
-            weighted_mean_col_err = sem_col
+            weighted_mean_col = float(np.mean(col_vals))
+
+            if n >= 2:
+                weighted_mean_col_err = float(
+                    np.std(col_vals, ddof=1) / math.sqrt(n)
+                )
+            else:
+                weighted_mean_col_err = math.nan
 
         rows.append(
             {
                 "family": fam,
                 "N": n,
-                "mean_V": mean_v,
-                "mean_UVW1_AB": mean_uv,
-                "mean_UVW1_minus_V": mean_col,
-                "std_UVW1_minus_V": std_col,
-                "sem_UVW1_minus_V": sem_col,
                 "weighted_mean_UVW1_minus_V": weighted_mean_col,
                 "weighted_mean_UVW1_minus_V_err": weighted_mean_col_err,
+                "std_UVW1_minus_V": std_col,
             }
         )
+    # rows: list[dict[str, Any]] = []
+
+    # order = ["C", "S", "X", "D", "V", "B", "A", "L", "K", "Q", "OTHER", "UNK"]
+
+    # for fam in order:
+    #     idx = [i for i, b in enumerate(buckets) if b == fam]
+    #     if not idx:
+    #         continue
+
+    #     v_vals = np.array([xs[i] for i in idx], dtype=float)
+    #     uv_vals = np.array([ys[i] for i in idx], dtype=float)
+    #     col_vals = uv_vals - v_vals
+
+    #     err_vals = np.array(
+    #         [
+    #             np.nan if yerrs[i] is None else float(yerrs[i])
+    #             for i in idx
+    #         ],
+    #         dtype=float,
+    #     )
+
+    #     n = len(idx)
+
+    #     mean_v = float(np.mean(v_vals))
+    #     mean_uv = float(np.mean(uv_vals))
+    #     mean_col = float(np.mean(col_vals))
+
+    #     if n >= 2:
+    #         std_col = float(np.std(col_vals, ddof=1))
+    #         sem_col = float(std_col / math.sqrt(n))
+    #     else:
+    #         std_col = math.nan
+    #         sem_col = math.nan
+
+    #     valid_w = np.isfinite(err_vals) & (err_vals > 0)
+
+    #     if np.any(valid_w):
+    #         weights = 1.0 / err_vals[valid_w] ** 2
+    #         weighted_mean_col = float(
+    #             np.sum(weights * col_vals[valid_w]) / np.sum(weights)
+    #         )
+    #         weighted_mean_col_err = float(math.sqrt(1.0 / np.sum(weights)))
+    #     else:
+    #         weighted_mean_col = mean_col
+    #         weighted_mean_col_err = sem_col
+
+    #     rows.append(
+    #         {
+    #             "family": fam,
+    #             "N": n,
+    #             "mean_V": mean_v,
+    #             "mean_UVW1_AB": mean_uv,
+    #             "mean_UVW1_minus_V": mean_col,
+    #             "std_UVW1_minus_V": std_col,
+    #             "sem_UVW1_minus_V": sem_col,
+    #             "weighted_mean_UVW1_minus_V": weighted_mean_col,
+    #             "weighted_mean_UVW1_minus_V_err": weighted_mean_col_err,
+    #         }
+    #     )
 
     csv_path = output_dir / "taxonomy_colour_summary.csv"
     tex_path = output_dir / "taxonomy_colour_summary.tex"
 
+    # fieldnames = [
+    #     "family",
+    #     "N",
+    #     "mean_V",
+    #     "mean_UVW1_AB",
+    #     "mean_UVW1_minus_V",
+    #     "std_UVW1_minus_V",
+    #     "sem_UVW1_minus_V",
+    #     "weighted_mean_UVW1_minus_V",
+    #     "weighted_mean_UVW1_minus_V_err",
+    # ]
     fieldnames = [
         "family",
         "N",
-        "mean_V",
-        "mean_UVW1_AB",
-        "mean_UVW1_minus_V",
-        "std_UVW1_minus_V",
-        "sem_UVW1_minus_V",
         "weighted_mean_UVW1_minus_V",
         "weighted_mean_UVW1_minus_V_err",
+        "std_UVW1_minus_V",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -3286,52 +3922,124 @@ def export_taxonomy_colour_summary_tables(
         except Exception:
             return "--"
 
+    # with tex_path.open("w", encoding="utf-8") as f:
+    #     f.write("\\begin{table}[t]\n")
+    #     f.write("\\centering\n")
+    #     f.write("\\scriptsize\n")
+    #     f.write("\\caption{Mean UVW1--$V$ colour by taxonomic family.}\n")
+    #     f.write("\\label{tab:taxonomy_colour_summary}\n")
+    #     f.write("\\begin{tabular}{lrrrr}\n")
+    #     f.write("\\hline\n")
+    #     f.write(
+    #         "Family & $N$ & "
+    #         "$\\langle V \\rangle$ & "
+    #         "$\\langle m_{\\rm UVW1} \\rangle$ & "
+    #         "$\\langle {\\rm UVW1}-V \\rangle$ \\\\\n"
+    #     )
+    #     f.write("\\hline\n")
+
+    #     for r in rows:
+    #         fam = r["family"]
+    #         n = r["N"]
+    #         mean_v = _fmt(r["mean_V"])
+    #         mean_uv = _fmt(r["mean_UVW1_AB"])
+
+    #         # col = _fmt(r["weighted_mean_UVW1_minus_V"])
+    #         # col_err = _fmt(r["weighted_mean_UVW1_minus_V_err"])
+
+    #         # if col_err == "--":
+    #         #     col_tex = col
+    #         # else:
+    #         #     col_tex = f"{col} $\\pm$ {col_err}"
+    #         col, col_err = _format_value_err_pair(
+    #             _finite_float(r["weighted_mean_UVW1_minus_V"]),
+    #             _finite_float(r["weighted_mean_UVW1_minus_V_err"]),
+    #             sig_err=2,
+    #         )
+
+    #         if col and col_err:
+    #             col_tex = rf"${col} \pm {col_err}$"
+    #         elif col:
+    #             col_tex = col
+    #         else:
+    #             col_tex = "--"
+    #         f.write(
+    #             f"{fam} & {n} & {mean_v} & {mean_uv} & {col_tex} \\\\\n"
+    #         )
+
+    #     f.write("\\hline\n")
+    #     f.write("\\end{tabular}\n")
+    #     f.write("\n")
+    #     f.write(
+    #         "\\vspace{0.5ex}\n"
+    #         "\\footnotesize\n"
+    #         "The colour uncertainty corresponds to the uncertainty of the "
+    #         "weighted mean using the UVW1 photometric errors. The intrinsic "
+    #         "object-to-object scatter is reported in the accompanying CSV file.\n"
+    #     )
+    #     f.write("\\end{table}\n")
+
     with tex_path.open("w", encoding="utf-8") as f:
         f.write("\\begin{table}[t]\n")
         f.write("\\centering\n")
-        f.write("\\scriptsize\n")
-        f.write("\\caption{Mean UVW1--$V$ colour by taxonomic family.}\n")
+        f.write("\\small\n")
+
+        f.write(
+            "\\caption{Object-level UVW1--$V_{\\rm pred}$ colours by taxonomic "
+            "group. The quoted colour is the inverse-variance weighted mean of "
+            "the individual object-level colours, using the UVW1 photometric "
+            "uncertainties. $s_{\\rm obs}$ is the unweighted sample standard "
+            "deviation of the individual object-level colours within each group "
+            "and therefore describes the observed object-to-object scatter, "
+            "rather than an intrinsic-scatter estimate.}\n"
+        )
+
         f.write("\\label{tab:taxonomy_colour_summary}\n")
-        f.write("\\begin{tabular}{lrrrr}\n")
+
+        # Spread the four columns across the full A&A column width.
+        f.write(
+            "\\begin{tabular}"
+            "{@{}l@{\\hspace{1.2em}}c"
+            "@{\\hspace{2.4em}}r"
+            "@{\\hspace{1.8em}}r@{}}\n"
+        )
+
         f.write("\\hline\n")
         f.write(
-            "Family & $N$ & "
-            "$\\langle V \\rangle$ & "
-            "$\\langle m_{\\rm UVW1} \\rangle$ & "
-            "$\\langle {\\rm UVW1}-V \\rangle$ \\\\\n"
+            "Tax. & $N$ & "
+            "$\\langle {\\rm UVW1}-V_{\\rm pred}\\rangle$ & "
+            "$s_{\\rm obs}$ \\\\\n"
         )
         f.write("\\hline\n")
 
         for r in rows:
             fam = r["family"]
             n = r["N"]
-            mean_v = _fmt(r["mean_V"])
-            mean_uv = _fmt(r["mean_UVW1_AB"])
 
-            col = _fmt(r["weighted_mean_UVW1_minus_V"])
-            col_err = _fmt(r["weighted_mean_UVW1_minus_V_err"])
+            col, col_err = _format_value_err_pair(
+                _finite_float(r["weighted_mean_UVW1_minus_V"]),
+                _finite_float(r["weighted_mean_UVW1_minus_V_err"]),
+                sig_err=2,
+            )
 
-            if col_err == "--":
+            if col and col_err:
+                col_tex = rf"${col} \pm {col_err}$"
+            elif col:
                 col_tex = col
             else:
-                col_tex = f"{col} $\\pm$ {col_err}"
+                col_tex = "--"
+
+            # Observed object-to-object sample standard deviation (ddof=1).
+            s_obs = _fmt(r["std_UVW1_minus_V"])
 
             f.write(
-                f"{fam} & {n} & {mean_v} & {mean_uv} & {col_tex} \\\\\n"
+                f"{fam} & {n} & {col_tex} & {s_obs} \\\\\n"
             )
 
         f.write("\\hline\n")
         f.write("\\end{tabular}\n")
-        f.write("\n")
-        f.write(
-            "\\vspace{0.5ex}\n"
-            "\\footnotesize\n"
-            "The colour uncertainty corresponds to the uncertainty of the "
-            "weighted mean using the UVW1 photometric errors. The intrinsic "
-            "object-to-object scatter is reported in the accompanying CSV file.\n"
-        )
         f.write("\\end{table}\n")
-
+        
     print(f"[PLOTS][LATEX] Saved: {tex_path}")
     print(f"[PLOTS][CSV] Saved: {csv_path}")
 
@@ -3340,10 +4048,12 @@ def export_taxonomy_colour_summary_tables(
         print(
             f"  {r['family']:>5s} "
             f"N={r['N']:2d} "
-            f"<UVW1-V>={_fmt(r['weighted_mean_UVW1_minus_V'])}"
+            f"<UVW1-Vpred>={_fmt(r['weighted_mean_UVW1_minus_V'])}"
             f"±{_fmt(r['weighted_mean_UVW1_minus_V_err'])} "
-            f"scatter={_fmt(r['std_UVW1_minus_V'])}"
+            f"s_obs={_fmt(r['std_UVW1_minus_V'])}"
         )
+
+
 
 if __name__ == "__main__":
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("config.ini")

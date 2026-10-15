@@ -119,7 +119,7 @@ def main():
             h6,
             theta,
             edgecolor="tab:orange",
-            linewidth=1.4,
+            linewidth=0.4,
             linestyle="--",
             label="6 arcsec-equivalent box" if first_large else None,
         )
@@ -133,16 +133,16 @@ def main():
             h_small,
             theta,
             edgecolor="tab:cyan",
-            linewidth=1.8,
+            linewidth=0.8,
             linestyle="-",
             label="Selected trail-height box" if first_small else None,
         )
         first_small = False
 
-        ax.plot(x, y, marker="+", color="tab:red", markersize=8, mew=1.5)
+        ax.plot(x, y, marker="+", color="tab:red", markersize=1, mew=0.5)
         ax.text(
-            x + 5,
-            y + 5,
+            x + 15,
+            y + 15,
             f"C1-{slot}",
             color="white",
             fontsize=9,
@@ -158,19 +158,74 @@ def main():
     h_small = float(df["height_h_pix"].iloc[0])
     h6 = float(df["height6_pix"].iloc[0])
 
-    ax.set_title(
-        f"{target} | OBSID {obs_id} | {filt} | {fits_name}\n"
-        rf"$C_1$ calibration stars: h={h_small:.1f} pix, h$_{{6''}}$={h6:.1f} pix, "
-        rf"median $C_1$={c1_med:.3f}",
-        fontsize=10,
-    )
+    # ax.set_title(
+    #     f"{target} | OBSID {obs_id} | {filt} | {fits_name}\n"
+    #     rf"$C_1$ calibration stars: h={h_small:.1f} pix, h$_{{6''}}$={h6:.1f} pix, "
+    #     rf"median $C_1$={c1_med:.3f}",
+    #     fontsize=10,
+    # )
 
     ax.set_xlabel("X [pix]")
     ax.set_ylabel("Y [pix]")
     ax.legend(loc="upper right", fontsize=8)
 
-    ax.set_xlim(-0.5, data.shape[1] - 0.5)
-    ax.set_ylim(-0.5, data.shape[0] - 0.5)
+    # ax.set_xlim(-0.5, data.shape[1] - 0.5)
+    # ax.set_ylim(-0.5, data.shape[0] - 0.5)
+
+    # ------------------------------------------------------------------
+    # Zoom around the C1 calibration stars
+    # ------------------------------------------------------------------
+    xmin, xmax = np.inf, -np.inf
+    ymin, ymax = np.inf, -np.inf
+
+    for _, r in df.iterrows():
+        x = float(r["x"])
+        y = float(r["y"])
+        width = float(r["width_pix"])
+        theta = float(r["theta_rad"])
+
+        # Use the larger C1 box for the crop limits
+        height = float(r["height6_pix"])
+
+        # Project the rotated rectangle onto X and Y
+        half_x = (
+            abs(0.5 * width * np.cos(theta))
+            + abs(0.5 * height * np.sin(theta))
+        )
+        half_y = (
+            abs(0.5 * width * np.sin(theta))
+            + abs(0.5 * height * np.cos(theta))
+        )
+
+        xmin = min(xmin, x - half_x)
+        xmax = max(xmax, x + half_x)
+        ymin = min(ymin, y - half_y)
+        ymax = max(ymax, y + half_y)
+
+    # Extra space around the calibration sources
+    padding = 100  # pixels
+
+    # xmin -= padding
+    # xmax += padding
+    # ymin -= padding
+    # ymax += padding
+
+    # Make the displayed region square
+    xc = 0.5 * (xmin + xmax)
+    yc = 0.5 * (ymin + ymax)
+
+    size = max(xmax - xmin, ymax - ymin)
+    half = 0.5 * size
+
+    # Keep crop inside the FITS image
+    xmin = max(-0.5, xc - half)
+    xmax = min(data.shape[1] - 0.5, xc + half)
+    ymin = max(-0.5, yc - half)
+    ymax = min(data.shape[0] - 0.5, yc + half)
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    
 
     plt.tight_layout()
     plt.savefig(OUT_PNG, dpi=220)

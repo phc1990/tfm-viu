@@ -27,9 +27,9 @@ except Exception:  # pragma: no cover
 
 
 DEFAULT_BASE = Path("/Users/eracero/workspace/tfm-viu")
-DEFAULT_RESULTS = DEFAULT_BASE / "results/batch_L/elena"
+DEFAULT_RESULTS = DEFAULT_BASE / "results/batch_U/elena"
 DEFAULT_TEMP = DEFAULT_BASE / "temp"
-DEFAULT_SCREENING_CSV = DEFAULT_RESULTS / "screening.csv"
+DEFAULT_SCREENING_CSV = DEFAULT_RESULTS / "screening_nuv_corresponding_u_20260611.csv"
 
 # SkyBoT is used only as a candidate lister in --all-xmatches mode.
 DEFAULT_SKYBOT_LOCATION = "500"

@@ -260,9 +260,6 @@ class UI:
         self.im.cmap.set_bad(alpha=0)
         self.fig.colorbar(self.im, ax=self.ax)
 
-
-        self.fig.colorbar(self.im, ax=self.ax)
-
         self._pan_press = None
         self._selector: Optional[TrailSelector] = None
         self._awaiting_annulus_click = False  # if True, next left-click sets annulus centre (key 'O')
